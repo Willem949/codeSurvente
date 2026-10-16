@@ -4,3 +4,4 @@ public enum BookingResult {
     SUCCESS,
     SOLD_OUT
 }
+
