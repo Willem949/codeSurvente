@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: flashsale
+  datasource:
+    url: jdbc:postgresql://localhost:5432/flashsale
+    username: flashsale
+    password: ""
+  jpa:
+    # Flyway crée le schéma, Hibernate se contente de vérifier que les entités correspondent
+    hibernate:
+      ddl-auto: validate
+    # Pas de session JPA ouverte pendant le rendu HTTP : les transactions restent courtes et explicites
+    open-in-view: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
