@@ -3,6 +3,7 @@ package com.wk.flashsale.booking.strategy;
 import com.wk.flashsale.PostgresIntegrationTest;
 import com.wk.flashsale.booking.ReservationRepository;
 import com.wk.flashsale.event.EventRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -15,6 +16,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Socle commun des tests de concurrence : chaque stratégie subit exactement la même rafale
@@ -42,7 +45,10 @@ abstract class AbstractBookingConcurrencyTest extends PostgresIntegrationTest {
     protected record Outcome(int successCount, long reservationCount, int availableSeats) {
     }
 
+    // Aussi après : la base est partagée par toute la JVM de test, les autres classes
+    // (EventIntegrationTest) s'attendent à trouver le Concert intact avec ses 500 places
     @BeforeEach
+    @AfterEach
     void resetDatabase() {
         // SQL direct : ne dépend ni du cache JPA ni du code testé
         jdbcTemplate.update("DELETE FROM reservation");
@@ -83,5 +89,18 @@ abstract class AbstractBookingConcurrencyTest extends PostgresIntegrationTest {
                 ClassUtils.getUserClass(strategy).getSimpleName(),
                 outcome.successCount(), outcome.reservationCount(), outcome.availableSeats());
         return outcome;
+    }
+
+    /** Invariant des stratégies correctes : 1 000 clients pour 500 places, tout part, ni plus ni moins. */
+    protected static void assertSoldExactlyAllSeats(Outcome outcome) {
+        assertThat(outcome.reservationCount())
+                .as("exactement %d réservations : ni survente, ni sous-vente", SEATS)
+                .isEqualTo(SEATS);
+        assertThat(outcome.availableSeats())
+                .as("plus aucune place restante")
+                .isZero();
+        assertThat(outcome.successCount())
+                .as("autant de SUCCESS que de réservations en base")
+                .isEqualTo(SEATS);
     }
 }
