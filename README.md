@@ -8,7 +8,7 @@ Le but : ne jamais vendre plus de places qu'il n'y en a, rester rapide, et que �
 
 - [x] Squelette Spring Boot, schéma PostgreSQL versionné avec Flyway
 - [x] Version naïve et test multi-thread qui prouve la survente
-- [ ] Stratégies anti-survente (verrou optimiste, pessimiste, UPDATE conditionnel, contrainte SQL)
+- [x] Stratégies anti-survente (verrou optimiste, pessimiste, UPDATE conditionnel, contrainte SQL)
 - [ ] Tests de charge Gatling et comparaison chiffrée
 - [ ] Plusieurs instances et Redis
 - [ ] Pré-réservation avec expiration, idempotence
@@ -16,6 +16,18 @@ Le but : ne jamais vendre plus de places qu'il n'y en a, rester rapide, et que �
 - [ ] Métriques Prometheus et Grafana, CI
 
 Premier résultat avec la version naïve : 1 000 tentatives sur 500 places, 1 000 réservations acceptées, et un compteur qui affiche encore 392 places libres. Les transactions lisent toutes le même stock et s'écrasent les unes les autres.
+
+Même rafale (1 000 tentatives, 50 threads, 500 places) sur chaque stratégie :
+
+| Stratégie | Réservations | Places restantes | Principe |
+|---|---|---|---|
+| Naïve | 1 000 | ~370 | lire, vérifier, écrire : les écritures s'écrasent |
+| Verrou optimiste (`@Version`) | 500 | 0 | l'écriture échoue si la version a changé, on réessaie |
+| Verrou pessimiste (`FOR UPDATE`) | 500 | 0 | la lecture verrouille la ligne, les autres attendent |
+| `UPDATE` atomique conditionnel | 500 | 0 | `... WHERE available_seats > 0`, une seule requête |
+| Contrainte `CHECK` | 500 | 0 | on décrémente sans vérifier, Postgres refuse le négatif |
+
+Toutes les stratégies correctes vendent exactement 500 places. La différence entre elles est une question de performance, qu'on mesurera à l'étape suivante.
 
 ## Stack
 

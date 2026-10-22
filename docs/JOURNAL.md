@@ -119,7 +119,35 @@ H2 ne gère pas `SELECT ... FOR UPDATE`, les niveaux d'isolation ni les verrous 
 
 **Si VS Code affiche des erreurs rouges** (`package does not match`, `cannot be resolved`) : `Ctrl+Shift+P` → « Java: Clean Java Language Server Workspace » → Restart. L'extension doit reconnaître le projet Maven.
 
-**À faire :** un `git init` et un premier commit, pour pouvoir comparer l'avant et l'après de chaque stratégie.
+---
+
+## 5 bis. Étapes 1 et 2 : la survente, puis quatre façons de l'empêcher
+
+### Le banc d'essai commun
+
+`AbstractBookingConcurrencyTest` lance la même rafale sur n'importe quelle `BookingStrategy` : 1 000 tentatives, 50 threads, un `CountDownLatch` comme pistolet de départ. La base est remise à zéro **avant et après** chaque test, en SQL direct : elle est partagée par toute la JVM de test, et `EventIntegrationTest` doit retrouver le Concert intact. Les stratégies correctes vérifient toutes `assertSoldExactlyAllSeats` : exactement 500 réservations, 0 place restante, 500 `SUCCESS`.
+
+### Résultats
+
+| Stratégie | Réservations | Places restantes | Test |
+|---|---|---|---|
+| `NaiveBookingStrategy` | 1 000 | ~370 (varie) | rouge, volontairement |
+| `OptimisticLockBookingStrategy` | 500 | 0 | vert |
+| `PessimisticLockBookingStrategy` | 500 | 0 | vert |
+| `AtomicUpdateBookingStrategy` | 500 | 0 | vert |
+| `CheckConstraintBookingStrategy` | 500 | 0 | vert |
+
+### Les choix et leur raison
+
+- **Verrou optimiste : une seconde entité `VersionedEvent` sur la même table**, avec `@Version`. Mettre `@Version` sur `Event` aurait aussi protégé la version naïve, et son test n'aurait plus rien prouvé.
+- **Verrou optimiste : la boucle de réessai est hors transaction** (`TransactionTemplate` dans une boucle, pas `@Transactional` sur `book()`). Une transaction en conflit est perdue, il faut en rouvrir une pour relire le stock à jour. Chaque conflit signifie qu'un autre client a réussi, donc le stock avance toujours. La limite (`MAX_ATTEMPTS = 200`, puis `BookingResult.CONFLICT`) évite seulement qu'un client tourne indéfiniment.
+- **Verrou pessimiste : `@Lock(PESSIMISTIC_WRITE)`** sur une requête dédiée `findByIdForUpdate`, qui génère `SELECT ... FOR UPDATE`. Le code reste le check-then-act naïf, seule la lecture change.
+- **Contrainte `CHECK` (migration `V3`)** : `available_seats >= 0`. La stratégie décrémente sans condition et traduit le refus de Postgres (`DataIntegrityViolationException`, SQLState `23514`) en `SOLD_OUT`. L'exception est attrapée **hors** de la transaction, car après une erreur Postgres refuse toute autre requête dans la même transaction. La contrainte reste en place pour toutes les stratégies : c'est un filet de sécurité au niveau du schéma. Elle n'empêche pas la version naïve de survendre, car celle-ci écrit des valeurs positives mais périmées.
+- Les warnings `SQLState: 23514` affichés pendant `CheckConstraintBookingStrategyTest` sont **normaux** : ce sont les 500 tentatives en trop refusées par la base.
+
+### Ce que les tests ne montrent pas encore
+
+Elles sont toutes correctes, mais pas équivalentes. L'optimiste multiplie les transactions perdues sur une ligne aussi disputée. Le pessimiste et l'`UPDATE` atomique font la queue sur le verrou de la ligne. La contrainte paie le coût d'une exception par refus. C'est l'objet de l'étape 3 : le mesurer.
 
 ---
 
@@ -149,25 +177,14 @@ Thread B :  lit 1 place ──► 1 > 0 ✔ ──► écrit 0, crée une réser
 
 ## 7. Ce qu'il reste à faire
 
-### Étape 1 (en cours) : version naïve et test qui prouve la survente
+Étapes 1 et 2 : terminées (voir section 5 bis).
 
-1. `booking/strategy/BookingStrategy` (interface) et `BookingResult` (`SUCCESS` / `SOLD_OUT`).
-2. `NaiveBookingStrategy` : lire, vérifier, décrémenter, créer la réservation.
-3. `NaiveBookingStrategyTest` (étend `PostgresIntegrationTest`) :
-   - 1 000 tentatives en parallèle sur 500 places (`Executors.newFixedThreadPool(50)`) ;
-   - un `CountDownLatch(1)` comme pistolet de départ, pour que tous les threads partent en même temps ;
-   - remise à zéro des données dans un `@BeforeEach` (la base est partagée entre les tests) ;
-   - invariant vérifié : réservations ≤ 500 et `available_seats == 500 - réservations`.
-   - **Ce test doit échouer** : c'est la preuve du bug.
-4. Le `Test.java` à la racine (ébauche de `ne_doit_pas_survendre`) peut servir de point de départ, puis être supprimé.
-
-**Question en attente :** si on ajoute `synchronized` sur `book()`, le test passe-t-il ? Pourquoi ça ne suffit pas en production ?
+**Question en attente :** si on ajoute `synchronized` sur `book()` de la version naïve, le test passe-t-il ? Pourquoi ça ne suffit pas en production ?
 
 ### Étapes suivantes
 
 | Étape | Contenu | Adaptation sans Docker |
 |---|---|---|
-| 2 | Stratégies anti-survente, chacune avec son test : verrou optimiste (`@Version`), verrou pessimiste (`FOR UPDATE`), `UPDATE` atomique conditionnel, contrainte `CHECK` | Aucune |
 | 3 | Tests de charge Gatling, comparaison chiffrée (débit, latence p99, erreurs), virtual threads activés ou non | Aucune |
 | 4 | Plusieurs instances, load balancer, compteur Redis (`DECR` / script Lua) | Instances en `java -jar` ; solution Redis à choisir |
 | 5 | Pré-réservation avec expiration et remise en vente, idempotence (double clic, retry réseau) | Aucune |
