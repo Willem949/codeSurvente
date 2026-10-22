@@ -22,6 +22,14 @@ public interface EventRepository extends JpaRepository<Event, Long> {
     int decrementAvailableSeats(@Param("id") long id);
 
     /**
+     * Décrémente SANS vérifier le stock : c'est la contrainte CHECK (available_seats >= 0)
+     * qui refuse l'écriture quand le compteur passerait sous zéro.
+     */
+    @Modifying
+    @Query("UPDATE Event e SET e.availableSeats = e.availableSeats - 1 WHERE e.id = :id")
+    int decrementAvailableSeatsUnchecked(@Param("id") long id);
+
+    /**
      * SELECT ... FOR UPDATE : la ligne reste verrouillée jusqu'à la fin de la transaction,
      * les autres lecteurs attendent au lieu de lire une valeur bientôt périmée.
      */
