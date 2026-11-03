@@ -1,0 +1,80 @@
+name: Benchmark
+
+# Le même tir que scripts/benchmark.ps1, mais avec un VRAI Redis (en local, jedis-mock
+# ne permet pas de mesurer la stratégie redis). Résultats : résumé du job et annotations.
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'pom.xml', '.github/workflows/benchmark.yml']
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: flashsale
+          POSTGRES_DB: flashsale
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U flashsale"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Construire le jar
+        run: ./mvnw -B -q -DskipTests package
+      - name: Démarrer deux instances
+        run: |
+          for port in 8081 8082; do
+            java -jar target/flashsale-0.0.1-SNAPSHOT.jar --server.port=$port \
+              --spring.profiles.active=bench --flashsale.redis.enabled=true > app-$port.log 2>&1 &
+          done
+          for port in 8081 8082; do
+            timeout 90 bash -c "until curl -sf http://127.0.0.1:$port/actuator/health | grep -q UP; do sleep 1; done"
+          done
+      - name: Tirs Gatling, toutes les stratégies
+        run: |
+          urls=http://127.0.0.1:8081,http://127.0.0.1:8082
+          echo "::notice title=machine::$(nproc) vCPU, $(free -g | awk '/Mem/ {print $2}') Go ; Gatling, 2 instances, Postgres et Redis sur le même runner"
+          # Préchauffage du JIT, non mesuré
+          ./mvnw -B -q gatling:test -Dstrategy=atomic -Dusers=3000 -DrampSeconds=10 -DbaseUrls=$urls > /dev/null 2>&1 || true
+          {
+            echo "| Stratégie | Réservations | Survente | KO | Débit (req/s) | p50 (ms) | p95 (ms) | p99 (ms) |"
+            echo "|---|---|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for s in naive optimistic pessimistic atomic check redis; do
+            ./mvnw -B -q gatling:test -Dstrategy=$s -Dusers=10000 -DrampSeconds=10 -DbaseUrls=$urls > g-$s.log 2>&1 || true
+            # Ligne "Global Information" de Gatling : colonnes Total | OK | KO
+            col() { grep "^> $1" g-$s.log | tail -1 | cut -d'|' -f$2 | tr -d ' ,'; }
+            check=$(grep '^\[CHECK' g-$s.log | tail -1 | sed 's/^\[CHECK [^]]*\] //')
+            res=$(echo "$check" | jq -r .reservations)
+            over=$(echo "$check" | jq -r .oversold)
+            ko=$(col "request count" 4); [ "$ko" = "-" ] && ko=0
+            rps=$(col "mean throughput" 2); p50=$(col "response time 50th" 2)
+            p95=$(col "response time 95th" 2); p99=$(col "response time 99th" 2)
+            echo "| $s | $res | $over | $ko | $rps | $p50 | $p95 | $p99 |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=$s::reservations=$res survente=$over KO=$ko debit=$rps p50=$p50 p95=$p95 p99=$p99"
+          done
+      - name: Rapports Gatling et logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark
+          path: |
+            target/gatling
+            app-*.log
+            g-*.log
