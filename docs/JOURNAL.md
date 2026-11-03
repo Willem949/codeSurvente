@@ -60,7 +60,7 @@ Le poste est un PC d'entreprise **sans droits administrateur**. Conséquences :
 | Testcontainers | **`io.zonky.test:embedded-postgres`** : un vrai Postgres 17 démarré depuis un jar pendant les tests |
 | Plusieurs instances en conteneurs | Plusieurs `java -jar` sur des ports différents |
 | Prometheus, Grafana, load balancer | Versions ZIP Windows, le moment venu |
-| Redis | À trancher à l'étape 4 (pas de version Windows officielle) |
+| Redis | **jedis-mock** : serveur compatible Redis écrit en Java (scripts Lua compris), pour les tests et la démo locale. Aucun binaire à installer. La CI utilise un vrai Redis |
 | CI GitHub Actions | Inchangée : elle tourne sur les serveurs Linux de GitHub |
 
 ### Règle d'or : jamais H2
@@ -131,7 +131,7 @@ H2 ne gère pas `SELECT ... FOR UPDATE`, les niveaux d'isolation ni les verrous 
 
 | Stratégie | Réservations | Places restantes | Test |
 |---|---|---|---|
-| `NaiveBookingStrategy` | 1 000 | ~370 (varie) | rouge, volontairement |
+| `NaiveBookingStrategy` | 1 000 | ~370 (varie) | vert : il vérifie que la survente se produit (inversé à l'étape 7, voir 5 ter) |
 | `OptimisticLockBookingStrategy` | 500 | 0 | vert |
 | `PessimisticLockBookingStrategy` | 500 | 0 | vert |
 | `AtomicUpdateBookingStrategy` | 500 | 0 | vert |
@@ -148,6 +148,78 @@ H2 ne gère pas `SELECT ... FOR UPDATE`, les niveaux d'isolation ni les verrous 
 ### Ce que les tests ne montrent pas encore
 
 Elles sont toutes correctes, mais pas équivalentes. L'optimiste multiplie les transactions perdues sur une ligne aussi disputée. Le pessimiste et l'`UPDATE` atomique font la queue sur le verrou de la ligne. La contrainte paie le coût d'une exception par refus. C'est l'objet de l'étape 3 : le mesurer.
+
+---
+
+## 5 ter. Étapes 3 à 7 : mesurer, passer à plusieurs instances, le vrai parcours d'achat
+
+### Étape 3 : tests de charge
+
+| Fichier | Rôle |
+|---|---|
+| `bench/BenchmarkController` | `POST /bench/events/{id}/bookings?strategy=atomic&userId=…`, `POST …/reset`, `GET …/check`. **Profil `bench` uniquement** : un reset n'a rien à faire en production |
+| `load/FlashSaleSimulation` (test) | Gatling : 10 000 acheteurs en 10 s sur une stratégie. Reset avant, lecture de `/check` après : c'est la base qui dit s'il y a eu survente, pas les réponses HTTP |
+| `scripts/benchmark.ps1` | Lance toutes les stratégies, avec et sans virtual threads, après un tir de préchauffage, et écrit `docs/BENCHMARK.md` |
+
+- Les beans de stratégie ont un nom court (`@Component("atomic")`…) : le contrôleur reçoit une `Map<String, BookingStrategy>` injectée par Spring, sans `switch` à maintenir.
+- **201 et 409 sont des réponses normales.** Seuls les 5xx et les timeouts sont des KO.
+- **Gatling partage les connexions TCP** (`shareConnections`). Au premier essai, chaque utilisateur virtuel ouvrait sa connexion : 1 000 nouvelles connexions par seconde, et Windows répondait `Connection refused` au-delà d'environ 600/s. On mesurait la pile TCP du portable, plus les stratégies. Avec les connexions partagées, le serveur suit le rythme du tir.
+- Leçons des chiffres (détail dans le README et `docs/BENCHMARK.md`) : l'`UPDATE` atomique est de loin le plus rapide (une fois tout vendu, la condition est fausse, aucun verrou n'est pris) ; le pessimiste fait la queue sur `FOR UPDATE` même quand c'est complet ; l'optimiste a une longue traîne de réessais ; la contrainte `CHECK` paie une exception, un rollback et un log par refus ; **les virtual threads dégradent les résultats** ici, car le goulot est le pool de 10 connexions et la ligne chaude : sans la limite des 200 threads de Tomcat, encore plus de requêtes s'entassent devant le pool.
+- **Limite connue** : il reste des KO résiduels dans certains tirs (quelques centaines sur 10 000), dont la cause n'a pas été isolée faute de temps. La correction, elle, est vérifiée à chaque tir : 0 survente, base cohérente.
+
+### Étape 4 : plusieurs instances et Redis
+
+| Fichier | Rôle |
+|---|---|
+| `stock/StockGate` | Le « portier » : `tryAcquire` répond vite « complet », `release` rend des places. Deux implémentations, choisies par `flashsale.redis.enabled` |
+| `stock/RedisStockGate` | Script Lua (lire, vérifier, décrémenter d'un bloc). Compteur absent : rechargé depuis Postgres avec `SETNX`. Redis en panne : on laisse passer, Postgres tranche |
+| `stock/DatabaseOnlyStockGate` | Sans Redis : laisse tout passer |
+| `booking/strategy/RedisBookingStrategy` | Portier Redis, puis `UPDATE` atomique. Si la base échoue, la place est rendue à Redis |
+| `scripts/start-instances.ps1`, `stop-instances.ps1`, `local-redis.ps1` | N instances en `java -jar` sur 8081, 8082…, et un Redis de démo (jedis-mock) |
+
+- **Pas de load balancer à installer** : Gatling accepte plusieurs `baseUrls` et répartit les utilisateurs en tourniquet.
+- Clés Redis avec *hash tag* (`stock:{1}`) : avec Redis Cluster, toutes les clés d'un événement restent sur le même nœud, condition pour qu'un script Lua les manipule ensemble.
+- Trois tests le prouvent : vente exacte avec Redis ; **Redis qui croit à 10 000 places** (toujours 500 vendues, Postgres a le dernier mot) ; **Redis injoignable** (500 vendues en passant par Postgres).
+
+### Étape 5 : pré-réservation et idempotence
+
+| Fichier | Rôle |
+|---|---|
+| `V4__hold_and_idempotency.sql` | `expires_at`, `idempotency_key` avec index `UNIQUE`, index partiel sur les `PENDING` |
+| `booking/ReservationService` | `hold` (bloquer), `confirm` (confirmer), `releaseExpiredHolds` (remettre en vente) |
+| `booking/ReservationController` | `POST /events/{id}/reservations` (header `Idempotency-Key` obligatoire), `POST /reservations/{id}/confirm` |
+| `booking/ReservationExpiryJob` | Toutes les 5 s, sur chaque instance |
+
+- **Idempotence à deux niveaux** : on cherche d'abord la clé (cas du retry, le plus fréquent) ; si deux requêtes arrivent ensemble, l'index `UNIQUE` rejette la seconde, sa transaction est annulée (la place revient en base), on la rend au portier et on renvoie la réservation gagnante. Testé avec 50 doubles clics simultanés : 1 réservation, 1 place prise.
+- **Réponse identique au caractère près** : `expires_at` est tronqué à la microseconde (précision de Postgres), sinon le rejeu, relu en base, différait du premier appel. Bug trouvé par le test de l'API.
+- Codes HTTP : 201 créé, 200 rejeu, 409 complet, 422 clé réutilisée pour une autre demande, 403 pas admis par la file, 204 confirmé, 410 expiré. Erreurs au format `application/problem+json` (RFC 9457).
+- **Confirmer = un `UPDATE … WHERE status = 'PENDING' AND expires_at > now`** : vérification et écriture en une requête, comme pour le stock. Le job ne peut pas remettre la place en vente pendant qu'on la confirme.
+- **Expiration sûre avec plusieurs instances** : `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING event_id`. Deux jobs simultanés se partagent les lignes au lieu de rendre deux fois la même place (testé avec 3 jobs en parallèle). Par lots de 500, pour éviter une transaction géante.
+
+### Étape 6 : file d'attente virtuelle
+
+| Fichier | Rôle |
+|---|---|
+| `queue/WaitingRoom` | Ticket de boulangerie dans Redis : `INCR` donne un numéro strictement croissant (FIFO même avec 3 instances), un curseur « admis jusqu'au n° X » avance de N à chaque tick |
+| `queue/QueueController` | `POST /events/{id}/queue` → ticket et position ; `GET /events/{id}/queue/{ticket}` → `WAITING` + position, ou `ADMITTED` |
+| `queue/QueueAdmissionJob` | Le tick, sur chaque instance ; un verrou `SET NX PX` fait qu'une seule agit par tick |
+
+- Tout est en O(1), quelle que soit la taille de la file : aucune liste à parcourir.
+- Le curseur ne dépasse jamais le dernier numéro tiré : pendant les ticks à vide, personne n'est admis d'avance.
+- Le ticket est **consommé** à la réservation (vérification et suppression dans un même script Lua) : impossible de le prêter ou de l'utiliser deux fois. Le contrôle d'idempotence passe **avant** : un retry avec la même clé est rejoué même si le ticket a déjà servi.
+- Activée par `flashsale.queue.enabled=true`, et seulement avec Redis.
+
+### Étape 7 : observabilité et CI
+
+- **Micrometer** : `flashsale.booking` (timer par stratégie et résultat), `flashsale.holds` (par issue), `flashsale.confirmations`, `flashsale.holds.expired`, `flashsale.queue.joined`, `flashsale.queue.waiting`. Histogrammes activés pour calculer p95/p99 dans Prometheus, sur toutes les instances à la fois.
+- `ops/` : configuration Prometheus, provisioning Grafana et dashboard « Flash Sale » (8 panneaux). Mode d'emploi dans `ops/README.md`. **Pas encore lancés sur ce poste** : il faut télécharger les ZIP.
+- **CI GitHub Actions** (`.github/workflows/ci.yml`) : job `build` (tous les tests) ; job `load-test` avec un vrai Postgres 17 et un vrai Redis 7 en conteneurs, deux instances, des tirs Gatling `atomic` et `redis`, et un échec si la base n'est pas cohérente. Les deux instances démarrent ensemble : Flyway pose un verrou en base, une seule applique les migrations. **Pas encore exécutée** : elle tournera au premier push.
+- `mvnw` est marqué exécutable dans git (il ne l'était pas, la CI Linux aurait échoué).
+- **Le test naïf est maintenant vert** : il vérifie que la survente *se produit*. Un test volontairement rouge empêche toute CI ; inversé, il garde la démonstration et alerte si un jour la survente n'est plus reproduite.
+
+### Tests
+
+32 tests, tous verts, sans Postgres ni Redis à installer : `PostgresIntegrationTest` démarre le Postgres embarqué, `TestRedis` le serveur jedis-mock. Les jobs planifiés sont coupés en test (`flashsale.scheduling.enabled=false`) ; les tests les déclenchent eux-mêmes au moment voulu.
 
 ---
 
@@ -177,19 +249,14 @@ Thread B :  lit 1 place ──► 1 > 0 ✔ ──► écrit 0, crée une réser
 
 ## 7. Ce qu'il reste à faire
 
-Étapes 1 et 2 : terminées (voir section 5 bis).
+Les 7 étapes sont faites (sections 5 bis et 5 ter). Restent :
+
+- **Lancer Prometheus et Grafana** en ZIP et vérifier le dashboard pendant un tir (`ops/README.md`).
+- **Pousser la branche** et vérifier que la CI passe, en particulier le job `load-test` qui n'a jamais tourné.
+- **Isoler les KO résiduels** des tirs Gatling (quelques centaines sur 10 000).
+- Idées pour aller plus loin : stock découpé en plusieurs lignes (moins de contention sur la ligne chaude), pool Hikari plus grand pour retester les virtual threads, limiter les réservations par utilisateur.
 
 **Question en attente :** si on ajoute `synchronized` sur `book()` de la version naïve, le test passe-t-il ? Pourquoi ça ne suffit pas en production ?
-
-### Étapes suivantes
-
-| Étape | Contenu | Adaptation sans Docker |
-|---|---|---|
-| 3 | Tests de charge Gatling, comparaison chiffrée (débit, latence p99, erreurs), virtual threads activés ou non | Aucune |
-| 4 | Plusieurs instances, load balancer, compteur Redis (`DECR` / script Lua) | Instances en `java -jar` ; solution Redis à choisir |
-| 5 | Pré-réservation avec expiration et remise en vente, idempotence (double clic, retry réseau) | Aucune |
-| 6 | File d'attente virtuelle, équité (premier arrivé, premier servi) | Dépend de Redis |
-| 7 | Prometheus et Grafana, CI GitHub Actions, README de démo | Prometheus et Grafana en ZIP ; la CI peut utiliser Docker sur les serveurs GitHub |
 
 ---
 
@@ -201,3 +268,7 @@ Thread B :  lit 1 place ──► 1 > 0 ✔ ──► écrit 0, crée une réser
 - « J'ai choisi Java 25 parce que depuis le JDK 24, `synchronized` ne bloque plus les virtual threads sur leur thread porteur. »
 - « Je désactive l'open-in-view pour que chaque connexion à la base soit rendue dès la fin de la transaction. »
 - « Un compteur de stock décrémenté atomiquement garantit l'absence de survente, au prix d'une ligne chaude. C'est un compromis entre correction et débit, et je l'ai mesuré. »
+- « J'ai testé Redis en panne et Redis qui se trompe : dans les deux cas, 500 places vendues, pas une de plus. »
+- « L'idempotence repose sur un index unique en base, pas sur un cache : elle tient même quand deux instances reçoivent le même double clic au même moment. »
+- « Les virtual threads n'ont pas amélioré le débit : le goulot était le pool de connexions. Ajouter de la concurrence devant un goulot ne fait qu'allonger la file. »
+- « Ma file d'attente est un ticket de boulangerie dans Redis : un INCR pour le numéro, un curseur pour les admissions, tout en O(1). »
