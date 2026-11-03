@@ -18,8 +18,8 @@ Vérifié sur ce poste avec Prometheus 3.15.1 et Grafana 13.3.0.
 .\scripts\observability.ps1 -Stop
 ```
 
-- Prometheus : http://localhost:9090/targets (une cible par instance ; les ports sans instance apparaissent `down`, c'est normal).
-- Grafana : http://localhost:3000/d/flashsale (admin / admin). La source Prometheus et le dashboard « Flash Sale » sont créés automatiquement depuis `ops/grafana/provisioning`.
+- Prometheus : http://127.0.0.1:9090/targets (une cible par instance ; les ports sans instance apparaissent `down`, c'est normal).
+- Grafana : http://127.0.0.1:3000/d/flashsale (admin / admin). La source Prometheus et le dashboard « Flash Sale » sont créés automatiquement depuis `ops/grafana/provisioning`.
 - Les deux outils n'écoutent que sur `127.0.0.1` : écouter sur toutes les interfaces fait apparaître la fenêtre du pare-feu Windows, qui demande les droits administrateur.
 - **Le premier démarrage de Grafana prend plusieurs minutes** (enregistrement des plugins, ralenti par l'antivirus). Les suivants sont rapides.
 - Si le projet n'est pas dans `C:\Users\wkraiem\Documents\codeSurvente`, corriger le chemin dans `ops/grafana/provisioning/dashboards/dashboards.yml`.

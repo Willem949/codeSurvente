@@ -3,8 +3,8 @@
     Démarre (ou arrête avec -Stop) Prometheus et Grafana installés en ZIP dans %USERPROFILE%\tools.
 
 .DESCRIPTION
-    Prometheus : http://localhost:9090 (cibles : http://localhost:9090/targets)
-    Grafana    : http://localhost:3000 (admin / admin), dashboard "Flash Sale" provisionné automatiquement.
+    Prometheus : http://127.0.0.1:9090 (cibles : http://127.0.0.1:9090/targets)
+    Grafana    : http://127.0.0.1:3000 (admin / admin), dashboard "Flash Sale" provisionné automatiquement.
     Le premier démarrage de Grafana peut prendre plusieurs minutes (enregistrement des plugins).
 #>
 param([switch]$Stop)
@@ -46,9 +46,9 @@ $grafana = Start-Process "$tools\grafana\bin\grafana.exe" -WorkingDirectory "$to
 
 $deadline = (Get-Date).AddMinutes(5)
 while ($true) {
-    try { if ((Invoke-RestMethod http://localhost:3000/api/health -TimeoutSec 3).database -eq "ok") { break } } catch { }
+    try { if ((Invoke-RestMethod http://127.0.0.1:3000/api/health -TimeoutSec 3).database -eq "ok") { break } } catch { }
     if ((Get-Date) -gt $deadline) { throw "Grafana ne répond pas, voir $logDir\grafana.log" }
     Start-Sleep 3
 }
-Write-Host "Prometheus : http://localhost:9090/targets"
-Write-Host "Grafana    : http://localhost:3000/d/flashsale (admin / admin)"
+Write-Host "Prometheus : http://127.0.0.1:9090/targets"
+Write-Host "Grafana    : http://127.0.0.1:3000/d/flashsale (admin / admin)"

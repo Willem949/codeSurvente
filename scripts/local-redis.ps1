@@ -35,7 +35,7 @@ $process = Start-Process java -ArgumentList @("-cp", "`"$classpath`"", "com.wk.f
 $process.Id | Set-Content $pidFile
 
 $deadline = (Get-Date).AddSeconds(30)
-while (-not (Test-NetConnection localhost -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+while (-not (Test-NetConnection 127.0.0.1 -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue)) {
     if ((Get-Date) -gt $deadline) { throw "Redis local ne démarre pas, voir target\local-redis.err.log" }
     Start-Sleep -Milliseconds 500
 }

@@ -32,7 +32,7 @@ import static io.gatling.javaapi.http.HttpDsl.status;
  */
 public class BuyerJourneySimulation extends Simulation {
 
-    private static final String[] BASE_URLS = System.getProperty("baseUrls", "http://localhost:8080").split(",");
+    private static final String[] BASE_URLS = System.getProperty("baseUrls", "http://127.0.0.1:8081").split(",");
     private static final int USERS = Integer.getInteger("users", 3_000);
     private static final int SEATS = Integer.getInteger("seats", 500);
     private static final int RAMP_SECONDS = Integer.getInteger("rampSeconds", 10);

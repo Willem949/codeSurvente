@@ -55,11 +55,11 @@ foreach ($instance in $started) {
     $deadline = (Get-Date).AddSeconds(90)
     while ($true) {
         try {
-            $health = Invoke-RestMethod "http://localhost:$($instance.Port)/actuator/health" -TimeoutSec 2
+            $health = Invoke-RestMethod "http://127.0.0.1:$($instance.Port)/actuator/health" -TimeoutSec 2
             if ($health.status -eq "UP") { break }
         } catch { }
         if ((Get-Date) -gt $deadline) { throw "L'instance du port $($instance.Port) ne démarre pas, voir $logDir\app-$($instance.Port).log" }
         Start-Sleep -Milliseconds 500
     }
-    Write-Host "Instance prête : http://localhost:$($instance.Port) (PID $($instance.Pid))"
+    Write-Host "Instance prête : http://127.0.0.1:$($instance.Port) (PID $($instance.Pid))"
 }

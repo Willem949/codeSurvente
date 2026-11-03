@@ -110,7 +110,7 @@ H2 ne gère pas `SELECT ... FOR UPDATE`, les niveaux d'isolation ni les verrous 
 # Se connecter à la base en ligne de commande
 & "$env:USERPROFILE\tools\pgsql\bin\psql.exe" -U flashsale -d flashsale
 
-# Lancer l'application, puis ouvrir http://localhost:8080/events/1
+# Lancer l'application, puis ouvrir http://127.0.0.1:8080/events/1
 .\mvnw.cmd spring-boot:run
 
 # Lancer les tests (n'ont PAS besoin du Postgres local : ils démarrent le leur)

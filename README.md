@@ -79,11 +79,11 @@ Il faut un JDK 25 et un PostgreSQL local avec une base `flashsale` (utilisateur 
 
 ```powershell
 .\mvnw.cmd test                                   # tous les tests, sans rien installer
-.\mvnw.cmd spring-boot:run                        # http://localhost:8080/events/1
+.\mvnw.cmd spring-boot:run                        # http://127.0.0.1:8080/events/1
 
 .\scripts\local-redis.ps1                         # Redis de démo (jedis-mock) sur 6379
 .\scripts\start-instances.ps1 -Count 3 -Redis -Queue
-.\mvnw.cmd gatling:test "-Dstrategy=redis" "-DbaseUrls=http://localhost:8081,http://localhost:8082,http://localhost:8083"
+.\mvnw.cmd gatling:test "-Dstrategy=redis" "-DbaseUrls=http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083"
 .\scripts\stop-instances.ps1
 
 .\scripts\benchmark.ps1                           # toutes les stratégies, régénère docs/BENCHMARK.md

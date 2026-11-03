@@ -25,7 +25,7 @@ $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 if ($Redis -and -not ($Strategies -contains "redis")) { $Strategies += "redis" }
 
-$baseUrls = (0..($Instances - 1) | ForEach-Object { "http://localhost:$(8081 + $_)" }) -join ","
+$baseUrls = (0..($Instances - 1) | ForEach-Object { "http://127.0.0.1:$(8081 + $_)" }) -join ","
 
 function Invoke-Shot([string]$strategy, [int]$users) {
     $lines = & "$root\mvnw.cmd" -q gatling:test "-Dstrategy=$strategy" "-Dusers=$users" "-DrampSeconds=$RampSeconds" "-DbaseUrls=$baseUrls" 2>&1 |

@@ -18,13 +18,13 @@ import static io.gatling.javaapi.http.HttpDsl.status;
  * Étape 3 : 10 000 acheteurs, 500 places, une stratégie. Même tir pour toutes les stratégies.
  * <pre>
  * ./mvnw gatling:test -Dstrategy=atomic -Dusers=10000 -DrampSeconds=10
- * ./mvnw gatling:test -Dstrategy=redis -DbaseUrls=http://localhost:8081,http://localhost:8082,http://localhost:8083
+ * ./mvnw gatling:test -Dstrategy=redis -DbaseUrls=http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083
  * </pre>
  * Plusieurs baseUrls : Gatling répartit les utilisateurs virtuels en tourniquet, comme un load balancer.
  */
 public class FlashSaleSimulation extends Simulation {
 
-    private static final String[] BASE_URLS = System.getProperty("baseUrls", "http://localhost:8080").split(",");
+    private static final String[] BASE_URLS = System.getProperty("baseUrls", "http://127.0.0.1:8081").split(",");
     private static final String STRATEGY = System.getProperty("strategy", "atomic");
     private static final int USERS = Integer.getInteger("users", 10_000);
     private static final int SEATS = Integer.getInteger("seats", 500);
