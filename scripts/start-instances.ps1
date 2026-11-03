@@ -37,6 +37,8 @@ for ($i = 0; $i -lt $Count; $i++) {
     $javaArgs = @(
         "-jar", "`"$jar`"",
         "--server.port=$port",
+        # Local uniquement : écouter sur toutes les interfaces fait apparaître le pare-feu Windows (droits admin)
+        "--server.address=127.0.0.1",
         "--spring.profiles.active=$Profile",
         "--flashsale.redis.enabled=$(Flag $Redis.IsPresent)",
         "--flashsale.queue.enabled=$(Flag $Queue.IsPresent)",

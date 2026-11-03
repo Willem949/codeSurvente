@@ -5,6 +5,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.InetAddress;
 
 /**
  * Serveur compatible Redis (jedis-mock, 100 % Java, scripts Lua compris), démarré une fois par JVM de test.
@@ -24,7 +25,8 @@ public final class TestRedis {
 
     private static RedisServer start() {
         try {
-            RedisServer server = RedisServer.newRedisServer();
+            // Port libre au hasard, en local uniquement (sinon le pare-feu Windows réclame les droits admin)
+            RedisServer server = RedisServer.newRedisServer(0, InetAddress.getLoopbackAddress());
             server.start();
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {

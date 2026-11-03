@@ -2,6 +2,8 @@ package com.wk.flashsale.support;
 
 import com.github.fppt.jedismock.RedisServer;
 
+import java.net.InetAddress;
+
 /**
  * Serveur compatible Redis pour la démo multi-instances sur ce poste (pas de Docker,
  * pas de Redis Windows officiel). Lancé par scripts/local-redis.ps1.
@@ -16,7 +18,8 @@ public final class LocalRedisServer {
 
     public static void main(String[] args) throws Exception {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 6379;
-        RedisServer server = RedisServer.newRedisServer(port);
+        // Local uniquement : écouter sur toutes les interfaces fait apparaître le pare-feu Windows (droits admin)
+        RedisServer server = RedisServer.newRedisServer(port, InetAddress.getLoopbackAddress());
         server.start();
         System.out.println("Redis (jedis-mock) à l'écoute sur le port " + server.getBindPort() + ". Ctrl+C pour arrêter.");
         Thread.currentThread().join();
