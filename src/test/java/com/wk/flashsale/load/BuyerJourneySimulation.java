@@ -12,7 +12,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 import static io.gatling.javaapi.core.CoreDsl.StringBody;
-import static io.gatling.javaapi.core.CoreDsl.asLongAs;
+import static io.gatling.javaapi.core.CoreDsl.asLongAsDuring;
+import static io.gatling.javaapi.core.CoreDsl.exec;
 import static io.gatling.javaapi.core.CoreDsl.jsonPath;
 import static io.gatling.javaapi.core.CoreDsl.rampUsers;
 import static io.gatling.javaapi.core.CoreDsl.randomSwitch;
@@ -55,13 +56,18 @@ public class BuyerJourneySimulation extends Simulation {
                     .check(status().is(201))
                     .check(jsonPath("$.token").saveAs("queueToken"))
                     .check(jsonPath("$.status").saveAs("queueStatus")))
-            // Comme la page "vous êtes 1 234e dans la file", rafraîchie toutes les secondes
-            .exec(asLongAs(session -> !"ADMITTED".equals(session.getString("queueStatus")))
-                    .on(http("position dans la file")
-                            .get("/events/" + EVENT_ID + "/queue/#{queueToken}")
-                            .check(status().is(200))
-                            .check(jsonPath("$.status").saveAs("queueStatus")))
-                    .pause(Duration.ofSeconds(1)))
+            // Sans ticket, la suite n'a pas de sens (et la boucle d'attente tournerait à vide)
+            .exitHereIfFailed()
+            // Comme la page "vous êtes 1 234e dans la file", rafraîchie toutes les secondes ;
+            // abandon au bout de 2 minutes, comme un vrai acheteur
+            .exec(asLongAsDuring(session -> !"ADMITTED".equals(session.getString("queueStatus")), Duration.ofMinutes(2))
+                    .on(exec(http("position dans la file")
+                                    .get("/events/" + EVENT_ID + "/queue/#{queueToken}")
+                                    .check(status().is(200))
+                                    .check(jsonPath("$.status").saveAs("queueStatus")))
+                            .exitHereIfFailed()
+                            .pause(Duration.ofSeconds(1))))
+            .exitHereIf(session -> !"ADMITTED".equals(session.getString("queueStatus")))
             .exec(http("bloquer une place")
                     .post("/events/" + EVENT_ID + "/reservations")
                     .header("Idempotency-Key", "#{idempotencyKey}")
