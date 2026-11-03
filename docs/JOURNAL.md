@@ -252,9 +252,8 @@ Thread B :  lit 1 place ──► 1 > 0 ✔ ──► écrit 0, crée une réser
 
 ## 7. Ce qu'il reste à faire
 
-Les 7 étapes sont faites et vérifiées (sections 5 bis et 5 ter), la CI est verte sur la branche `etapes-2-a-7`. Restent :
+Les 7 étapes sont faites et vérifiées (sections 5 bis et 5 ter), tout est fusionné dans `main`, et la CI y est verte (tests + tir de charge avec un vrai Redis). Restent :
 
-- **Fusionner la branche dans `main`** (ouvrir la PR depuis GitHub).
 - Pour des chiffres de charge propres à 1 000 req/s : Gatling sur une autre machine que l'application.
 - Idées pour aller plus loin : stock découpé en plusieurs lignes (moins de contention sur la ligne chaude), pool Hikari plus grand pour retester les virtual threads, limiter les réservations par utilisateur.
 
