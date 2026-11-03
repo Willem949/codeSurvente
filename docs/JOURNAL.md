@@ -165,7 +165,7 @@ Elles sont toutes correctes, mais pas équivalentes. L'optimiste multiplie les t
 - **201 et 409 sont des réponses normales.** Seuls les 5xx et les timeouts sont des KO.
 - **Gatling partage les connexions TCP** (`shareConnections`). Au premier essai, chaque utilisateur virtuel ouvrait sa connexion : 1 000 nouvelles connexions par seconde, et Windows répondait `Connection refused` au-delà d'environ 600/s. On mesurait la pile TCP du portable, plus les stratégies. Avec les connexions partagées, le serveur suit le rythme du tir.
 - Leçons des chiffres (détail dans le README et `docs/BENCHMARK.md`) : l'`UPDATE` atomique est de loin le plus rapide (une fois tout vendu, la condition est fausse, aucun verrou n'est pris) ; le pessimiste fait la queue sur `FOR UPDATE` même quand c'est complet ; l'optimiste a une longue traîne de réessais ; la contrainte `CHECK` paie une exception, un rollback et un log par refus ; **les virtual threads dégradent les résultats** ici, car le goulot est le pool de 10 connexions et la ligne chaude : sans la limite des 200 threads de Tomcat, encore plus de requêtes s'entassent devant le pool.
-- **Limite connue** : il reste des KO résiduels dans certains tirs (quelques centaines sur 10 000), dont la cause n'a pas été isolée faute de temps. La correction, elle, est vérifiée à chaque tir : 0 survente, base cohérente.
+- **Les KO restants (quelques centaines à 2 500 sur 10 000) viennent de la saturation du portable**, pas du code. Ce sont tous des `Connection refused` qui échouent en ~10 ms : Gatling, l'application et Postgres se partagent les 12 cœurs logiques, et quand une stratégie ralentit (naïve, `CHECK`, virtual threads) le thread qui accepte les connexions de Tomcat ne vide plus sa file. Démonstration : agrandir `accept-count` (1 000) ou `max-connections` (20 000) ne change rien, voire aggrave ; en revanche **le même tir naïf étalé sur 30 s au lieu de 10 (333 req/s) donne 0 KO** (et survend encore 1 092 places). Pour des chiffres propres à 1 000 req/s, il faudrait Gatling sur une autre machine. La correction, elle, est vérifiée à chaque tir : 0 survente, base cohérente.
 
 ### Étape 4 : plusieurs instances et Redis
 
@@ -208,18 +208,21 @@ Elles sont toutes correctes, mais pas équivalentes. L'optimiste multiplie les t
 - Le curseur ne dépasse jamais le dernier numéro tiré : pendant les ticks à vide, personne n'est admis d'avance.
 - Le ticket est **consommé** à la réservation (vérification et suppression dans un même script Lua) : impossible de le prêter ou de l'utiliser deux fois. Le contrôle d'idempotence passe **avant** : un retry avec la même clé est rejoué même si le ticket a déjà servi.
 - Activée par `flashsale.queue.enabled=true`, et seulement avec Redis.
+- **Le parcours complet a été tiré** (`BuyerJourneySimulation`, 1 000 acheteurs, 500 places) : 1 000 entrées dans la file, 1 000 réservations tentées (500 places, 500 « complet »), 1 000 doubles clics absorbés, 343 paiements (≈ 70 % des 500, comme prévu), **0 erreur**, base cohérente. Ce tir a trouvé deux bugs :
+  - **Dans la simulation** : la pause d'une seconde était placée *après* la boucle d'attente au lieu de *dedans*. Chaque acheteur interrogeait sa position en continu, ce qui a noyé Redis. Et si l'entrée dans la file échouait, la boucle tournait à l'infini, faute de ticket. Corrigé (`exitHereIfFailed`, abandon au bout de 2 minutes).
+  - **Dans l'application** : Redis trop lent faisait répondre **500**. Désormais `ServiceUnavailableHandler` répond **503 + `Retry-After: 1`** quand Redis (ou la base) est injoignable ou trop lent : le client sait qu'il peut réessayer, et grâce à l'`Idempotency-Key` ce nouvel essai ne peut pas prendre une seconde place.
 
 ### Étape 7 : observabilité et CI
 
 - **Micrometer** : `flashsale.booking` (timer par stratégie et résultat), `flashsale.holds` (par issue), `flashsale.confirmations`, `flashsale.holds.expired`, `flashsale.queue.joined`, `flashsale.queue.waiting`. Histogrammes activés pour calculer p95/p99 dans Prometheus, sur toutes les instances à la fois.
-- `ops/` : configuration Prometheus, provisioning Grafana et dashboard « Flash Sale » (8 panneaux). Mode d'emploi dans `ops/README.md`. **Pas encore lancés sur ce poste** : il faut télécharger les ZIP.
-- **CI GitHub Actions** (`.github/workflows/ci.yml`) : job `build` (tous les tests) ; job `load-test` avec un vrai Postgres 17 et un vrai Redis 7 en conteneurs, deux instances, des tirs Gatling `atomic` et `redis`, et un échec si la base n'est pas cohérente. Les deux instances démarrent ensemble : Flyway pose un verrou en base, une seule applique les migrations. **Pas encore exécutée** : elle tournera au premier push.
+- `ops/` : configuration Prometheus, provisioning Grafana et dashboard « Flash Sale » (8 panneaux). Mode d'emploi dans `ops/README.md`, lancement par `scripts/observability.ps1`. **Vérifié sur ce poste** (Prometheus 3.15.1, Grafana 13.3.0, ZIP officiels contrôlés par SHA-256) : Prometheus collecte les instances, Grafana provisionne seul la source et le dashboard, et les 12 requêtes des 8 panneaux renvoient des données après un tir. Les deux outils n'écoutent que sur `127.0.0.1`, sinon le pare-feu Windows réclame les droits admin.
+- **CI GitHub Actions** (`.github/workflows/ci.yml`) : job `build` (tous les tests) ; job `load-test` avec un vrai Postgres 17 et un vrai Redis 7 en conteneurs, deux instances, des tirs Gatling `atomic` et `redis`, et un échec si la base n'est pas cohérente. Les deux instances démarrent ensemble : Flyway pose un verrou en base, une seule applique les migrations. Déclenchée sur toutes les branches. **Verte au premier push**, les deux jobs compris : le job `load-test` prouve l'absence de survente avec un vrai Redis, ce que le poste ne peut pas faire.
 - `mvnw` est marqué exécutable dans git (il ne l'était pas, la CI Linux aurait échoué).
 - **Le test naïf est maintenant vert** : il vérifie que la survente *se produit*. Un test volontairement rouge empêche toute CI ; inversé, il garde la démonstration et alerte si un jour la survente n'est plus reproduite.
 
 ### Tests
 
-32 tests, tous verts, sans Postgres ni Redis à installer : `PostgresIntegrationTest` démarre le Postgres embarqué, `TestRedis` le serveur jedis-mock. Les jobs planifiés sont coupés en test (`flashsale.scheduling.enabled=false`) ; les tests les déclenchent eux-mêmes au moment voulu.
+34 tests, tous verts, sans Postgres ni Redis à installer : `PostgresIntegrationTest` démarre le Postgres embarqué, `TestRedis` le serveur jedis-mock. Les jobs planifiés sont coupés en test (`flashsale.scheduling.enabled=false`) ; les tests les déclenchent eux-mêmes au moment voulu.
 
 ---
 
@@ -249,11 +252,10 @@ Thread B :  lit 1 place ──► 1 > 0 ✔ ──► écrit 0, crée une réser
 
 ## 7. Ce qu'il reste à faire
 
-Les 7 étapes sont faites (sections 5 bis et 5 ter). Restent :
+Les 7 étapes sont faites et vérifiées (sections 5 bis et 5 ter), la CI est verte sur la branche `etapes-2-a-7`. Restent :
 
-- **Lancer Prometheus et Grafana** en ZIP et vérifier le dashboard pendant un tir (`ops/README.md`).
-- **Pousser la branche** et vérifier que la CI passe, en particulier le job `load-test` qui n'a jamais tourné.
-- **Isoler les KO résiduels** des tirs Gatling (quelques centaines sur 10 000).
+- **Fusionner la branche dans `main`** (ouvrir la PR depuis GitHub).
+- Pour des chiffres de charge propres à 1 000 req/s : Gatling sur une autre machine que l'application.
 - Idées pour aller plus loin : stock découpé en plusieurs lignes (moins de contention sur la ligne chaude), pool Hikari plus grand pour retester les virtual threads, limiter les réservations par utilisateur.
 
 **Question en attente :** si on ajoute `synchronized` sur `book()` de la version naïve, le test passe-t-il ? Pourquoi ça ne suffit pas en production ?
