@@ -21,27 +21,32 @@ Le but : ne jamais vendre plus de places qu'il n'y en a, rester rapide, et que �
 
 ## Les solutions, mesurées
 
-Même rafale (1 000 tentatives, 50 threads) dans les tests, puis 10 000 acheteurs en 10 s avec Gatling :
+Même rafale (1 000 tentatives, 50 threads) dans les tests, puis 10 000 acheteurs avec Gatling, sur ce portable et sur la CI GitHub :
 
-| Stratégie | Principe | Survente | p50 | p99 |
+| Stratégie | Principe | Survente | p99 portable (500 req/s) | p99 CI (1 000 req/s, 2 instances) |
 |---|---|---|---|---|
-| Naïve | lire, vérifier, écrire | **~4 500 places en trop** | 4,5 s | 6,5 s |
-| Verrou optimiste (`@Version`) | l'écriture échoue si la version a changé, on réessaie | 0 | 71 ms | 3,7 s |
-| Verrou pessimiste (`FOR UPDATE`) | la lecture verrouille la ligne, les autres attendent | 0 | 1,0 s | 1,5 s |
-| **`UPDATE` atomique conditionnel** | `... WHERE available_seats > 0`, une seule requête | 0 | **1 ms** | **0,7 s** |
-| Contrainte `CHECK` | on décrémente sans vérifier, Postgres refuse le négatif | 0 | 2,0 s | 2,5 s |
-| Redis + `UPDATE` atomique | Redis filtre les perdants, Postgres a le dernier mot | 0 | (384 ms)* | (1,5 s)* |
+| Naïve | lire, vérifier, écrire | **280 à 8 528 places en trop** | 144 ms | 6,2 s |
+| Verrou optimiste (`@Version`) | l'écriture échoue si la version a changé, on réessaie | 0 | 422 ms | 6,3 s |
+| Verrou pessimiste (`FOR UPDATE`) | la lecture verrouille la ligne, les autres attendent | 0 | 30 ms | 1,4 s |
+| **`UPDATE` atomique conditionnel** | `... WHERE available_seats > 0`, une seule requête | 0 | **6 ms** | **444 ms** |
+| Contrainte `CHECK` | on décrémente sans vérifier, Postgres refuse le négatif | 0 | 525 ms | 413 ms |
+| Redis + `UPDATE` atomique | Redis filtre les perdants, Postgres a le dernier mot | 0 | (1,8 s)* | 1,5 s (p50 : 0 ms) |
 
-\* Mesuré avec jedis-mock, un serveur de test qui traite une commande à la fois : la correction est prouvée, la vitesse d'un vrai Redis non. La CI le teste contre un vrai Redis.
+\* Sur le portable, Redis est jedis-mock, un serveur de test qui traite une commande à la fois : sa ligne prouve la correction, pas la vitesse. La colonne CI utilise un vrai Redis.
 
-Résultats complets (avec et sans virtual threads) : [docs/BENCHMARK.md](docs/BENCHMARK.md). Mesures sur un portable, application et Gatling sur la même machine : ce sont les écarts entre stratégies qui comptent, pas les valeurs absolues.
+Détails : [docs/BENCHMARK.md](docs/BENCHMARK.md) (portable, la référence) et [docs/BENCHMARK-ci.md](docs/BENCHMARK-ci.md) (CI, vrai Redis). Les autres fichiers `docs/BENCHMARK-1000rps-*.md` gardent la trace des tirs en surcharge.
+
+**Mesurer sur une seule machine.** Gatling, l'appli et Postgres sur le même portable se volent le processeur : on mesure leur bagarre plutôt que les stratégies, et Windows finit par refuser des connexions. Deux réglages suffisent, sans droits admin :
+1. **Isoler les cœurs** (affinité processeur) : 4 cœurs logiques pour Gatling, 4 pour l'appli, 4 pour Postgres et Redis, comme sur trois machines. Le p99 de l'`UPDATE` atomique passe de 714 ms à 228 ms à 1 000 req/s.
+2. **Tirer à un débit que la machine tient** : à 500 req/s, plus aucune erreur, quelle que soit la stratégie. Au-delà, l'appli, qui n'a plus que 4 cœurs, sature vraiment : c'est alors sa capacité qu'on mesure, ce qui reste utile comme test de surcharge.
 
 Ce qu'on en retient :
 - **L'`UPDATE` atomique gagne** : une fois tout vendu, `WHERE available_seats > 0` est faux, la requête ne prend aucun verrou et répond en une milliseconde.
 - **Le pessimiste fait la queue même quand c'est complet** : chaque requête prend le verrou `FOR UPDATE` avant de découvrir qu'il n'y a plus rien.
 - **L'optimiste a une longue traîne** : la plupart des tentatives entrent en conflit et recommencent.
 - **La contrainte `CHECK` est un filet de sécurité, pas une stratégie** : chaque refus coûte une exception, un rollback et une ligne de log.
-- **Les virtual threads n'aident pas ici, et un pool plus grand non plus** : on ne manquait pas de threads. Avec 30 connexions au lieu de 10, le p99 de l'`UPDATE` atomique passe de 0,7 s à 2,0 s ([docs/BENCHMARK-pool30.md](docs/BENCHMARK-pool30.md)) : plus de transactions se battent pour la même ligne et pour le CPU, que Postgres partage avec l'appli et Gatling. Les virtual threads empirent les choses pour la même raison, en laissant entrer encore plus de travail simultané. **Le pool de 10 et les 200 threads de Tomcat servaient de limiteur.**
+- **Avec un vrai Redis, les perdants ont leur réponse en 0 ms** (p50 en CI) sans toucher Postgres ; la traîne vient des 500 gagnants, qui passent quand même par la base.
+- **Les virtual threads n'aident pas ici, et un pool plus grand non plus** : on ne manquait pas de threads. Avec 30 connexions au lieu de 10, le p99 de l'`UPDATE` atomique passe de 0,7 s à 2,0 s ([docs/BENCHMARK-1000rps-pool30-sans-isolation.md](docs/BENCHMARK-1000rps-pool30-sans-isolation.md)) : plus de transactions se battent pour la même ligne et pour le CPU. Les virtual threads empirent les choses pour la même raison, en laissant entrer encore plus de travail simultané. **Le pool de 10 et les 200 threads de Tomcat servaient de limiteur.**
 
 ## Architecture
 
