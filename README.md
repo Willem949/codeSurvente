@@ -41,7 +41,7 @@ Ce qu'on en retient :
 - **Le pessimiste fait la queue même quand c'est complet** : chaque requête prend le verrou `FOR UPDATE` avant de découvrir qu'il n'y a plus rien.
 - **L'optimiste a une longue traîne** : la plupart des tentatives entrent en conflit et recommencent.
 - **La contrainte `CHECK` est un filet de sécurité, pas une stratégie** : chaque refus coûte une exception, un rollback et une ligne de log.
-- **Les virtual threads n'aident pas ici** : le goulot est la ligne chaude et le pool de 10 connexions, pas le nombre de threads. Sans limite de threads, encore plus de requêtes s'entassent devant le pool.
+- **Les virtual threads n'aident pas ici, et un pool plus grand non plus** : on ne manquait pas de threads. Avec 30 connexions au lieu de 10, le p99 de l'`UPDATE` atomique passe de 0,7 s à 2,0 s ([docs/BENCHMARK-pool30.md](docs/BENCHMARK-pool30.md)) : plus de transactions se battent pour la même ligne et pour le CPU, que Postgres partage avec l'appli et Gatling. Les virtual threads empirent les choses pour la même raison, en laissant entrer encore plus de travail simultané. **Le pool de 10 et les 200 threads de Tomcat servaient de limiteur.**
 
 ## Architecture
 
@@ -58,13 +58,13 @@ Ce qu'on en retient :
 
 - **PostgreSQL garantit l'absence de survente**, par un `UPDATE` atomique. Tout le reste est de l'optimisation.
 - **Redis est un accélérateur** : un script Lua décrémente une copie du stock et répond « complet » aux 9 500 perdants sans toucher la base. S'il se trompe, Postgres refuse ; s'il tombe, tout passe par Postgres (testé).
-- **Les instances sont sans état** : un `synchronized` ne protégerait qu'une JVM sur trois.
+- **Les instances sont sans état** : un `synchronized` ne protège qu'une JVM. Mesuré (`SynchronizedBookingTest`) : posé sur la méthode `@Transactional`, il laisse passer ~1 000 réservations pour 500 places, car le verrou est rendu *avant* le commit ; autour de la transaction, il marche sur une instance (500), puis la survente revient à deux instances (~1 000).
 
 ## Le parcours d'un acheteur
 
 1. `POST /events/1/queue` : entrer dans la file d'attente, recevoir un ticket et sa position (ticket de boulangerie dans Redis : premier arrivé, premier servi, même entre plusieurs instances).
 2. `GET /events/1/queue/{ticket}` : attendre d'être admis (N personnes admises par seconde, une seule instance fait avancer la file à chaque tick).
-3. `POST /events/1/reservations` avec `Idempotency-Key` et `X-Queue-Token` : bloquer une place pour 10 minutes. Un double clic ou un retry renvoie la même réservation (index `UNIQUE` en base), le ticket ne sert qu'une fois.
+3. `POST /events/1/reservations` avec `Idempotency-Key` et `X-Queue-Token` : bloquer une place pour 10 minutes. Un double clic ou un retry renvoie la même réservation (index `UNIQUE` en base), le ticket ne sert qu'une fois, et un acheteur ne peut avoir qu'une réservation active par événement (index unique partiel : un bot qui multiplie les clés n'obtient qu'une place).
 4. `POST /reservations/{id}/confirm` : confirmer après paiement. Passé le délai, `410 Gone`, et un job remet la place en vente (`FOR UPDATE SKIP LOCKED` : plusieurs instances peuvent le lancer sans rendre deux fois la même place).
 
 ## Stack

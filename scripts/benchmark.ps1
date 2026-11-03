@@ -10,6 +10,7 @@
 .EXAMPLE
     .\scripts\benchmark.ps1
     .\scripts\benchmark.ps1 -Redis -Instances 3 -Users 10000
+    .\scripts\benchmark.ps1 -Strategies atomic,pessimistic -PoolSize 30 -Output docs\BENCHMARK-pool30.md
 #>
 param(
     [string[]]$Strategies = @("naive", "optimistic", "pessimistic", "atomic", "check"),
@@ -18,7 +19,9 @@ param(
     [int]$Instances = 1,
     [switch]$Redis,
     [switch]$SkipVirtualThreads,
-    [string]$Output = "docs\BENCHMARK.md"
+    [string]$Output = "docs\BENCHMARK.md",
+    # Taille du pool de connexions Postgres de chaque instance (10 = défaut de Hikari)
+    [int]$PoolSize = 10
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
@@ -57,7 +60,8 @@ $modes = @($false) + $(if ($SkipVirtualThreads) { @() } else { @($true) })
 $results = @()
 $built = $false
 foreach ($virtual in $modes) {
-    $startArgs = @{ Count = $Instances; Redis = $Redis; VirtualThreads = $virtual; NoBuild = $built }
+    $startArgs = @{ Count = $Instances; Redis = $Redis; VirtualThreads = $virtual; NoBuild = $built
+                    ExtraArgs = @("--spring.datasource.hikari.maximum-pool-size=$PoolSize") }
     & "$PSScriptRoot\start-instances.ps1" @startArgs
     $built = $true
     try {
@@ -83,7 +87,7 @@ $md = @(
     "Généré par ``scripts/benchmark.ps1`` le $(Get-Date -Format 'yyyy-MM-dd HH:mm'). Ne pas modifier à la main, relancer le script.",
     "",
     "- Tir : $Users acheteurs en $RampSeconds s (rampe), 500 places, $Instances instance(s), Gatling sur la même machine",
-    "- Machine : $cpu, PostgreSQL 17 local, pool Hikari par défaut (10 connexions)",
+    "- Machine : $cpu, PostgreSQL 17 local, pool Hikari de $PoolSize connexions par instance",
     "- Connexions TCP partagées par Gatling (comme derrière un load balancer) : sans ça, Windows refuse les connexions au-delà de ~600/s et on mesure le système, pas les stratégies",
     "- 201 (place obtenue) et 409 (complet) sont des réponses normales ; KO = erreurs 5xx ou timeouts",
     "- Ligne ``redis`` indicative seulement : le Redis local est jedis-mock (serveur de test en Java, une commande à la fois), bien plus lent qu'un vrai Redis",

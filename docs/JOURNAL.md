@@ -164,7 +164,8 @@ Elles sont toutes correctes, mais pas équivalentes. L'optimiste multiplie les t
 - Les beans de stratégie ont un nom court (`@Component("atomic")`…) : le contrôleur reçoit une `Map<String, BookingStrategy>` injectée par Spring, sans `switch` à maintenir.
 - **201 et 409 sont des réponses normales.** Seuls les 5xx et les timeouts sont des KO.
 - **Gatling partage les connexions TCP** (`shareConnections`). Au premier essai, chaque utilisateur virtuel ouvrait sa connexion : 1 000 nouvelles connexions par seconde, et Windows répondait `Connection refused` au-delà d'environ 600/s. On mesurait la pile TCP du portable, plus les stratégies. Avec les connexions partagées, le serveur suit le rythme du tir.
-- Leçons des chiffres (détail dans le README et `docs/BENCHMARK.md`) : l'`UPDATE` atomique est de loin le plus rapide (une fois tout vendu, la condition est fausse, aucun verrou n'est pris) ; le pessimiste fait la queue sur `FOR UPDATE` même quand c'est complet ; l'optimiste a une longue traîne de réessais ; la contrainte `CHECK` paie une exception, un rollback et un log par refus ; **les virtual threads dégradent les résultats** ici, car le goulot est le pool de 10 connexions et la ligne chaude : sans la limite des 200 threads de Tomcat, encore plus de requêtes s'entassent devant le pool.
+- Leçons des chiffres (détail dans le README et `docs/BENCHMARK.md`) : l'`UPDATE` atomique est de loin le plus rapide (une fois tout vendu, la condition est fausse, aucun verrou n'est pris) ; le pessimiste fait la queue sur `FOR UPDATE` même quand c'est complet ; l'optimiste a une longue traîne de réessais ; la contrainte `CHECK` paie une exception, un rollback et un log par refus ; **les virtual threads dégradent les résultats** ici : sans la limite des 200 threads de Tomcat, encore plus de requêtes s'entassent en même temps.
+- **Retest avec un pool de 30 connexions** (`benchmark.ps1 -PoolSize 30`, résultats dans `docs/BENCHMARK-pool30.md`) : **pas mieux, souvent pire.** `atomic` sans virtual threads passe de 0,7 s à 2,0 s de p99, `atomic` avec virtual threads de 1,8 s à 4,6 s. J'avais supposé que le pool de 10 était *le* goulot ; c'est faux. Plus de connexions, c'est plus de transactions qui se disputent la même ligne et le CPU, que Postgres partage avec l'appli et Gatling. Le pool de 10 et les 200 threads servaient en fait de **limiteur de concurrence**. Leçon : ajouter du parallélisme devant une ressource qui sature n'accélère rien, ça allonge la file.
 - **Les KO restants (quelques centaines à 2 500 sur 10 000) viennent de la saturation du portable**, pas du code. Ce sont tous des `Connection refused` qui échouent en ~10 ms : Gatling, l'application et Postgres se partagent les 12 cœurs logiques, et quand une stratégie ralentit (naïve, `CHECK`, virtual threads) le thread qui accepte les connexions de Tomcat ne vide plus sa file. Démonstration : agrandir `accept-count` (1 000) ou `max-connections` (20 000) ne change rien, voire aggrave ; en revanche **le même tir naïf étalé sur 30 s au lieu de 10 (333 req/s) donne 0 KO** (et survend encore 1 092 places). Pour des chiffres propres à 1 000 req/s, il faudrait Gatling sur une autre machine. La correction, elle, est vérifiée à chaque tir : 0 survente, base cohérente.
 
 ### Étape 4 : plusieurs instances et Redis
@@ -222,7 +223,7 @@ Elles sont toutes correctes, mais pas équivalentes. L'optimiste multiplie les t
 
 ### Tests
 
-34 tests, tous verts, sans Postgres ni Redis à installer : `PostgresIntegrationTest` démarre le Postgres embarqué, `TestRedis` le serveur jedis-mock. Les jobs planifiés sont coupés en test (`flashsale.scheduling.enabled=false`) ; les tests les déclenchent eux-mêmes au moment voulu.
+41 tests, tous verts, sans Postgres ni Redis à installer : `PostgresIntegrationTest` démarre le Postgres embarqué, `TestRedis` le serveur jedis-mock. Les jobs planifiés sont coupés en test (`flashsale.scheduling.enabled=false`) ; les tests les déclenchent eux-mêmes au moment voulu.
 
 ---
 
@@ -248,16 +249,35 @@ Thread B :  lit 1 place ──► 1 > 0 ✔ ──► écrit 0, crée une réser
 
 `@Transactional` ne protège pas : en `READ_COMMITTED` (le niveau par défaut de Postgres), les deux transactions lisent la même valeur sans se bloquer.
 
+### Et `synchronized` ? (la question de l'étape 1, réponse dans `SynchronizedBookingTest`)
+
+| Où est le `synchronized` | Réservations pour 500 places (3 essais) |
+|---|---|
+| Sur la méthode `@Transactional` de la version naïve | **990 à 1 000** : presque aucune protection |
+| Autour de l'appel transactionnel, une seule instance | **500** : correct |
+| Autour de l'appel, deux instances derrière un load balancer | **990 à 1 000** : la survente revient |
+
+- **Le piège : sur la méthode `@Transactional`, le verrou est rendu avant le commit.** Le proxy Spring ouvre la transaction, entre dans la méthode `synchronized`, en sort (verrou rendu), *puis* commite. Le thread suivant lit le stock pendant ce commit et voit l'ancienne valeur. Le test semble protégé et ne l'est pas.
+- **Autour de la transaction**, le verrou couvre aussi le commit : ça marche, mais les réservations passent une par une dans toute la JVM, y compris pour d'autres événements.
+- **En production, ça ne suffit pas** : chaque instance a son propre verrou en mémoire, et elles partagent la même base. À deux instances, on revient à la survente. La protection doit être là où l'état est partagé : dans la base (`UPDATE` atomique, verrou de ligne, contrainte) ou, pour accélérer, dans Redis.
+
+### Une réservation active par acheteur
+
+Index unique partiel `(event_id, user_id) WHERE status IN ('PENDING', 'CONFIRMED')` (migration V5). Un bot qui envoie 20 clés d'idempotence différentes au même instant obtient une place, les 19 autres requêtes reçoivent `409` « vous avez déjà une réservation » (testé). Une réservation expirée ne compte plus : l'acheteur peut retenter sa chance. Les tests ont trouvé une course : pendant un double clic, la première requête peut commiter entre les deux lectures de la seconde. Celle-ci répondait « déjà réservé » au lieu de rejouer. Elle vérifie maintenant la clé avant de refuser.
+
+### Pourquoi le stock n'est pas découpé en plusieurs lignes
+
+L'idée : 10 lignes de 50 places au lieu d'une ligne de 500, pour que 10 transactions avancent en parallèle. Les mesures disent que ce n'est pas le goulot ici : l'`UPDATE` atomique répond en **1 ms en médiane** sous 1 000 req/s, et une fois tout vendu il ne prend même plus de verrou. Ce qui sature, c'est la machine (Gatling, l'application et Postgres sur les mêmes cœurs) et le pool de connexions. Découper le stock ajouterait de la complexité (choisir une ligne, gérer les lignes vides, recalculer le total) pour un gain qu'on ne peut pas mesurer sur ce poste. C'est à reconsidérer avec plusieurs milliers de places, beaucoup d'acheteurs servis par seconde, et une base qui sature réellement sur ses verrous.
+
 ---
 
 ## 7. Ce qu'il reste à faire
 
 Les 7 étapes sont faites et vérifiées (sections 5 bis et 5 ter), tout est fusionné dans `main`, et la CI y est verte (tests + tir de charge avec un vrai Redis). Restent :
 
-- Pour des chiffres de charge propres à 1 000 req/s : Gatling sur une autre machine que l'application.
-- Idées pour aller plus loin : stock découpé en plusieurs lignes (moins de contention sur la ligne chaude), pool Hikari plus grand pour retester les virtual threads, limiter les réservations par utilisateur.
+- Pour des chiffres de charge propres à 1 000 req/s : Gatling sur une autre machine que l'application. C'est la seule limite connue, et elle ne se lève pas sur ce poste.
 
-**Question en attente :** si on ajoute `synchronized` sur `book()` de la version naïve, le test passe-t-il ? Pourquoi ça ne suffit pas en production ?
+Faits depuis la liste précédente : la réponse à la question `synchronized`, la limite d'une réservation par acheteur, l'essai des virtual threads avec un pool plus grand (section 5 ter, étape 3), et la décision argumentée de ne pas découper le stock.
 
 ---
 
@@ -271,5 +291,6 @@ Les 7 étapes sont faites et vérifiées (sections 5 bis et 5 ter), tout est fus
 - « Un compteur de stock décrémenté atomiquement garantit l'absence de survente, au prix d'une ligne chaude. C'est un compromis entre correction et débit, et je l'ai mesuré. »
 - « J'ai testé Redis en panne et Redis qui se trompe : dans les deux cas, 500 places vendues, pas une de plus. »
 - « L'idempotence repose sur un index unique en base, pas sur un cache : elle tient même quand deux instances reçoivent le même double clic au même moment. »
-- « Les virtual threads n'ont pas amélioré le débit : le goulot était le pool de connexions. Ajouter de la concurrence devant un goulot ne fait qu'allonger la file. »
+- « Les virtual threads n'ont pas amélioré le débit, et tripler le pool de connexions non plus : ça a même dégradé le p99. Le pool et les threads de Tomcat servaient de limiteur de concurrence. Ajouter du parallélisme devant une ressource qui sature ne fait qu'allonger la file. »
+- « J'ai posé synchronized sur une méthode @Transactional : 1 000 réservations pour 500 places. Le verrou est rendu avant le commit. »
 - « Ma file d'attente est un ticket de boulangerie dans Redis : un INCR pour le numéro, un curseur pour les admissions, tout en O(1). »
