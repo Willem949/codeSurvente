@@ -13,6 +13,8 @@ public record HoldOutcome(Status status, Reservation reservation) {
         /** Même clé d'idempotence déjà vue : on renvoie la réservation existante, sans en créer une seconde. */
         REPLAYED,
         SOLD_OUT,
+        /** L'acheteur a déjà une réservation active (en attente ou confirmée) pour cet événement. */
+        ALREADY_RESERVED,
         /** File d'attente active et ticket absent, pas encore admis ou déjà utilisé. */
         NOT_ADMITTED,
         /** Clé déjà utilisée pour un autre utilisateur ou un autre événement : erreur du client. */

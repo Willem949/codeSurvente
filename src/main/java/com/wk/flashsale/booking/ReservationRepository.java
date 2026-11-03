@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Optional;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
@@ -15,6 +16,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     long countByEventIdAndStatus(Long eventId, ReservationStatus status);
 
     Optional<Reservation> findByIdempotencyKey(String idempotencyKey);
+
+    boolean existsByEventIdAndUserIdAndStatusIn(Long eventId, String userId, Collection<ReservationStatus> statuses);
 
     /**
      * Confirme une pré-réservation seulement si elle est encore PENDING et pas expirée.

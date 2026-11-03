@@ -139,6 +139,36 @@ class ReservationServiceTest extends PostgresIntegrationTest {
         assertThat(availableSeats()).as("ni plus ni moins que les places réellement libérées").isEqualTo(SEATS);
     }
 
+    @Test
+    void un_acheteur_ne_peut_avoir_qu_une_reservation_active() {
+        reservationService.hold(EVENT_ID, "alice", "key-1", null);
+
+        HoldOutcome second = reservationService.hold(EVENT_ID, "alice", "key-2", null);
+
+        assertThat(second.status()).isEqualTo(HoldOutcome.Status.ALREADY_RESERVED);
+        assertThat(availableSeats()).isEqualTo(SEATS - 1);
+    }
+
+    @Test
+    void un_bot_qui_envoie_vingt_cles_differentes_en_meme_temps_n_obtient_qu_une_place() throws Exception {
+        // Aucune requête ne voit encore celle des autres : c'est l'index unique partiel (V5) qui départage
+        List<HoldOutcome> outcomes = concurrently(20, i -> reservationService.hold(EVENT_ID, "bot", "bot-key-" + i, null));
+
+        assertThat(outcomes).filteredOn(o -> o.status() == HoldOutcome.Status.CREATED).hasSize(1);
+        assertThat(outcomes).filteredOn(o -> o.status() == HoldOutcome.Status.ALREADY_RESERVED).hasSize(19);
+        assertThat(availableSeats()).as("les places prises par les perdants ont été rendues").isEqualTo(SEATS - 1);
+    }
+
+    @Test
+    void apres_expiration_l_acheteur_peut_retenter_sa_chance() {
+        reservationService.hold(EVENT_ID, "alice", "key-1", null);
+        expireAllPendingHolds();
+        reservationService.releaseExpiredHolds();
+
+        assertThat(reservationService.hold(EVENT_ID, "alice", "key-2", null).status())
+                .isEqualTo(HoldOutcome.Status.CREATED);
+    }
+
     private void expireAllPendingHolds() {
         jdbcTemplate.update("UPDATE reservation SET expires_at = now() - interval '1 second' WHERE status = 'PENDING'");
     }

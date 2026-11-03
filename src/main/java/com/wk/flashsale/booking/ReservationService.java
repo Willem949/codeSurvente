@@ -30,6 +30,9 @@ public class ReservationService {
     // Par lots : si 10 000 pré-réservations expirent en même temps, aucune transaction géante
     private static final int EXPIRY_BATCH_SIZE = 500;
 
+    // Mêmes statuts que l'index unique partiel de la migration V5
+    private static final List<ReservationStatus> ACTIVE_STATUSES = List.of(ReservationStatus.PENDING, ReservationStatus.CONFIRMED);
+
     private final EventRepository eventRepository;
     private final ReservationRepository reservationRepository;
     private final StockGate stockGate;
@@ -78,17 +81,27 @@ public class ReservationService {
             return replay(existing.get(), eventId, userId);
         }
 
-        // 2. File d'attente : seul un ticket admis donne accès à la vente, et il ne sert qu'une fois
+        // 2. Une réservation active par acheteur. Vérifié avant la file d'attente pour ne pas
+        //    gaspiller son ticket ; l'index unique de la base couvre les requêtes simultanées
+        if (hasActiveReservation(eventId, userId)) {
+            // La première requête d'un double clic a pu commiter entre la lecture de l'étape 1 et celle-ci :
+            // si c'est la même clé, c'est un rejeu, pas une seconde réservation (course trouvée par les tests)
+            return reservationRepository.findByIdempotencyKey(idempotencyKey)
+                    .map(mine -> replay(mine, eventId, userId))
+                    .orElse(HoldOutcome.of(HoldOutcome.Status.ALREADY_RESERVED));
+        }
+
+        // 3. File d'attente : seul un ticket admis donne accès à la vente, et il ne sert qu'une fois
         if (waitingRoom.isPresent() && !waitingRoom.get().consumeIfAdmitted(eventId, queueToken)) {
             return HoldOutcome.of(HoldOutcome.Status.NOT_ADMITTED);
         }
 
-        // 3. Filtre rapide (Redis si activé) : inutile d'aller en base si tout est vendu
+        // 4. Filtre rapide (Redis si activé) : inutile d'aller en base si tout est vendu
         if (!stockGate.tryAcquire(eventId)) {
             return HoldOutcome.of(HoldOutcome.Status.SOLD_OUT);
         }
 
-        // 4. Postgres tranche : UPDATE atomique + INSERT dans la même transaction
+        // 5. Postgres tranche : UPDATE atomique + INSERT dans la même transaction
         try {
             Reservation created = transactionTemplate.execute(status -> {
                 if (eventRepository.decrementAvailableSeats(eventId) == 0) {
@@ -101,15 +114,25 @@ public class ReservationService {
                 return reservationRepository.saveAndFlush(Reservation.pending(eventId, userId, idempotencyKey, expiresAt));
             });
             return created == null ? HoldOutcome.of(HoldOutcome.Status.SOLD_OUT) : HoldOutcome.created(created);
-        } catch (DataIntegrityViolationException duplicateKey) {
-            // Deux requêtes avec la même clé en même temps (deux instances, double clic très rapide) :
-            // l'index UNIQUE a rejeté la seconde, sa transaction est annulée et la place rendue en base.
-            // On la rend aussi au portier, puis on renvoie la réservation de la gagnante
+        } catch (DataIntegrityViolationException duplicate) {
+            // Un index UNIQUE a rejeté l'INSERT : la transaction est annulée et la place rendue en base.
+            // On la rend aussi au portier, puis on regarde lequel des deux index a parlé
             stockGate.release(eventId, 1);
-            return reservationRepository.findByIdempotencyKey(idempotencyKey)
-                    .map(winner -> replay(winner, eventId, userId))
-                    .orElseThrow(() -> duplicateKey);
+            // Même clé en même temps (double clic très rapide, deux instances) : on renvoie la gagnante
+            Optional<Reservation> winner = reservationRepository.findByIdempotencyKey(idempotencyKey);
+            if (winner.isPresent()) {
+                return replay(winner.get(), eventId, userId);
+            }
+            // Clés différentes mais même acheteur au même instant (bot, onglets multiples)
+            if (hasActiveReservation(eventId, userId)) {
+                return HoldOutcome.of(HoldOutcome.Status.ALREADY_RESERVED);
+            }
+            throw duplicate;
         }
+    }
+
+    private boolean hasActiveReservation(long eventId, String userId) {
+        return reservationRepository.existsByEventIdAndUserIdAndStatusIn(eventId, userId, ACTIVE_STATUSES);
     }
 
     private static HoldOutcome replay(Reservation reservation, long eventId, String userId) {

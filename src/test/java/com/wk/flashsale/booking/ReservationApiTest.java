@@ -97,6 +97,14 @@ class ReservationApiTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void deuxieme_reservation_du_meme_acheteur_409() throws Exception {
+        mockMvc.perform(hold("alice", "k1")).andExpect(status().isCreated());
+        mockMvc.perform(hold("alice", "k2"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("Vous avez déjà une réservation pour cet événement"));
+    }
+
+    @Test
     void sans_redis_la_file_d_attente_n_existe_pas() throws Exception {
         mockMvc.perform(post("/events/1/queue")).andExpect(status().isNotFound());
     }

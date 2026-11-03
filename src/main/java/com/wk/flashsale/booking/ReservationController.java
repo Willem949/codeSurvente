@@ -42,6 +42,7 @@ class ReservationController {
             // Même réponse qu'au premier appel, en 200 : le client ne voit pas la différence, c'est le but
             case REPLAYED -> ResponseEntity.ok(ReservationResponse.from(outcome.reservation()));
             case SOLD_OUT -> problem(HttpStatus.CONFLICT, "Plus aucune place disponible");
+            case ALREADY_RESERVED -> problem(HttpStatus.CONFLICT, "Vous avez déjà une réservation pour cet événement");
             case NOT_ADMITTED -> problem(HttpStatus.FORBIDDEN, "Ticket de file d'attente absent, pas encore admis ou déjà utilisé");
             case KEY_REUSED -> problem(HttpStatus.UNPROCESSABLE_CONTENT, "Cette Idempotency-Key a déjà servi pour une autre demande");
         };
