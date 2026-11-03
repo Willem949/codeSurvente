@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Tous les tests : PostgreSQL embarqué et Redis jedis-mock, rien à installer
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Tests
+        run: ./mvnw -B verify
+      - name: Rapports de test
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports
+
+  # Ce que le poste de dev ne peut pas faire (pas de Docker) : un VRAI Redis, un vrai Postgres,
+  # deux instances derrière Gatling, et la vérification qu'aucune place n'est survendue
+  load-test:
+    needs: build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: flashsale
+          POSTGRES_DB: flashsale
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U flashsale"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Construire le jar
+        run: ./mvnw -B -q -DskipTests package
+      - name: Démarrer deux instances
+        # Elles démarrent en même temps : Flyway pose un verrou en base, une seule applique les migrations
+        run: |
+          for port in 8081 8082; do
+            java -jar target/flashsale-0.0.1-SNAPSHOT.jar --server.port=$port \
+              --spring.profiles.active=bench --flashsale.redis.enabled=true \
+              --spring.threads.virtual.enabled=true > app-$port.log 2>&1 &
+          done
+          for port in 8081 8082; do
+            timeout 90 bash -c "until curl -sf http://localhost:$port/actuator/health | grep -q UP; do sleep 1; done"
+          done
+      - name: Tirs Gatling et vérification de la base
+        run: |
+          for strategy in atomic redis; do
+            ./mvnw -B -q gatling:test -Dstrategy=$strategy -Dusers=5000 -DrampSeconds=10 \
+              -DbaseUrls=http://localhost:8081,http://localhost:8082 | tee gatling-$strategy.log
+            grep -q '"oversold":0' gatling-$strategy.log
+            grep -q '"consistent":true' gatling-$strategy.log
+          done
+      - name: Rapports Gatling et logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gatling
+          path: |
+            target/gatling
+            app-*.log
+            gatling-*.log

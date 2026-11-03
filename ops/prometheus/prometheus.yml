@@ -1,0 +1,11 @@
+# Prometheus pour la démo locale : interroge les instances lancées par scripts/start-instances.ps1
+# Lancement (version ZIP Windows) : prometheus.exe --config.file=ops\prometheus\prometheus.yml
+global:
+  # Court, pour voir une vente flash de 10 secondes
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: flashsale
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['localhost:8081', 'localhost:8082', 'localhost:8083']

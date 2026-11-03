@@ -1,0 +1,116 @@
+{
+  "uid": "flashsale",
+  "title": "Flash Sale",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "tags": ["flashsale"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Débit HTTP par endpoint et statut",
+      "description": "201 = place obtenue, 409 = complet, 5xx = vrai problème",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[30s]))",
+          "legendFormat": "{{uri}} {{status}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Latence p99 par endpoint",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{uri!~\"/actuator.*\"}[1m])))",
+          "legendFormat": "{{uri}}" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Benchmark : réservations par stratégie et résultat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (strategy, result) (rate(flashsale_booking_seconds_count[30s]))",
+          "legendFormat": "{{strategy}} {{result}}" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Benchmark : latence p99 par stratégie",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, strategy) (rate(flashsale_booking_seconds_bucket[1m])))",
+          "legendFormat": "{{strategy}}" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Pré-réservations par issue",
+      "description": "REPLAYED = double clic ou retry absorbé par l'idempotence",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (outcome) (rate(flashsale_holds_total[30s]))", "legendFormat": "{{outcome}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(flashsale_confirmations_total[30s]))", "legendFormat": "confirmées" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(flashsale_holds_expired_total[30s]))", "legendFormat": "expirées, remises en vente" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "File d'attente virtuelle",
+      "description": "Personnes devant le dernier arrivé, et rythme des arrivées",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max by (event) (flashsale_queue_waiting)", "legendFormat": "en attente (événement {{event}})" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(flashsale_queue_joined_total[30s]))", "legendFormat": "arrivées / s" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Pool de connexions Postgres (par instance)",
+      "description": "Des threads en attente de connexion = la base (ou la ligne chaude) est le goulot",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (instance) (hikaricp_connections_active)", "legendFormat": "actives {{instance}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (instance) (hikaricp_connections_pending)", "legendFormat": "en attente {{instance}}" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Threads JVM (par instance)",
+      "description": "Avec les virtual threads, ce nombre reste bas même sous forte charge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (instance) (jvm_threads_live_threads)", "legendFormat": "{{instance}}" }
+      ]
+    }
+  ]
+}
