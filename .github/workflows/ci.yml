@@ -1,9 +1,10 @@
 name: CI
 
 on:
+  # Toutes les branches : une branche de travail est vérifiée dès son premier push
   push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   # Tous les tests : PostgreSQL embarqué et Redis jedis-mock, rien à installer
