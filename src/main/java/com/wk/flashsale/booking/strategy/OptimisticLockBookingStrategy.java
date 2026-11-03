@@ -15,7 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * a changé entre-temps. On recommence alors dans une NOUVELLE transaction, avec le stock à jour.
  * Sur une ligne aussi disputée, la plupart des tentatives entrent en conflit : c'est le coût à mesurer.
  */
-@Component
+@Component("optimistic")
 public class OptimisticLockBookingStrategy implements BookingStrategy {
 
     // Chaque échec signifie qu'un autre client a réussi : le stock progresse toujours vers 0,

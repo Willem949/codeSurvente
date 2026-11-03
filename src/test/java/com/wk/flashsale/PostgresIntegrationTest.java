@@ -1,6 +1,7 @@
 package com.wk.flashsale;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -13,6 +14,9 @@ import java.io.UncheckedIOException;
  * Flyway y applique les migrations au démarrage du contexte Spring.
  */
 public abstract class PostgresIntegrationTest {
+
+    protected static final long EVENT_ID = 1L;
+    protected static final int SEATS = 500;
 
     private static final EmbeddedPostgres POSTGRES = startPostgres();
 
@@ -37,5 +41,16 @@ public abstract class PostgresIntegrationTest {
         registry.add("spring.datasource.url", () -> POSTGRES.getJdbcUrl("postgres", "postgres"));
         registry.add("spring.datasource.username", () -> "postgres");
         registry.add("spring.datasource.password", () -> "");
+        // Les tests déclenchent eux-mêmes les jobs (expiration, file d'attente) au moment voulu
+        registry.add("flashsale.scheduling.enabled", () -> "false");
+    }
+
+    /**
+     * Remet le Concert dans son état initial, en SQL direct : ne dépend ni du cache JPA ni du code testé.
+     * La base est partagée par toute la JVM de test, chaque classe doit la laisser propre.
+     */
+    protected static void resetConcert(JdbcTemplate jdbcTemplate) {
+        jdbcTemplate.update("DELETE FROM reservation");
+        jdbcTemplate.update("UPDATE event SET total_seats = ?, available_seats = ? WHERE id = ?", SEATS, SEATS, EVENT_ID);
     }
 }

@@ -11,9 +11,41 @@ spring:
       ddl-auto: validate
     # Pas de session JPA ouverte pendant le rendu HTTP : les transactions restent courtes et explicites
     open-in-view: false
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 500ms
+  threads:
+    virtual:
+      # Étape 3 : comparé avec et sans (--spring.threads.virtual.enabled=true)
+      enabled: false
+
+flashsale:
+  redis:
+    # Sans Redis, l'application marche quand même : tout passe par Postgres
+    enabled: false
+  hold:
+    ttl: PT10M
+    expiry-check-interval: PT5S
+  queue:
+    # La file d'attente vit dans Redis : à activer avec flashsale.redis.enabled
+    enabled: false
+    admissions-per-tick: 50
+    tick-interval: PT1S
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+  health:
+    redis:
+      # Pas de Redis attendu = pas de "DOWN" dans /actuator/health
+      enabled: ${flashsale.redis.enabled}
+  metrics:
+    distribution:
+      # Histogrammes pour calculer p95 / p99 dans Prometheus
+      percentiles-histogram:
+        http.server.requests: true
+        flashsale.booking: true

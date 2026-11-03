@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Les transactions concurrentes font la queue sur le verrou de la ligne, mais ce verrou
  * ne dure que le temps de la transaction (un UPDATE et un INSERT).
  */
-@Component
+@Component("atomic")
 public class AtomicUpdateBookingStrategy implements BookingStrategy {
 
     private final EventRepository eventRepository;

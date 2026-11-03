@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
  * pose un verrou (SELECT ... FOR UPDATE). Les transactions passent une par une sur la ligne,
  * et chacune voit le stock laissé par la précédente.
  */
-@Component
+@Component("pessimistic")
 public class PessimisticLockBookingStrategy implements BookingStrategy {
 
     private final EventRepository eventRepository;

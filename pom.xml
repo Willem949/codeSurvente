@@ -30,6 +30,10 @@
 		<java.version>25</java.version>
 		<embedded-postgres.version>2.1.0</embedded-postgres.version>
 		<embedded-postgres-binaries.version>17.5.0</embedded-postgres-binaries.version>
+		<jedis-mock.version>1.1.20</jedis-mock.version>
+		<gatling.version>3.16.0</gatling.version>
+		<gatling-maven-plugin.version>4.21.12</gatling-maven-plugin.version>
+		<gatling.simulationClass>com.wk.flashsale.load.FlashSaleSimulation</gatling.simulationClass>
 	</properties>
 	<dependencyManagement>
 		<dependencies>
@@ -67,6 +71,16 @@
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<!-- Étapes 4 et 6 : compteur de stock et file d'attente partagés entre les instances -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+		<!-- Étape 7 : /actuator/prometheus -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
 		</dependency>
 
 		<dependency>
@@ -106,6 +120,20 @@
 			<version>${embedded-postgres.version}</version>
 			<scope>test</scope>
 		</dependency>
+		<!-- Serveur compatible Redis écrit en Java (Lua compris) : remplace un vrai Redis, faute de Docker -->
+		<dependency>
+			<groupId>com.github.fppt</groupId>
+			<artifactId>jedis-mock</artifactId>
+			<version>${jedis-mock.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- Étape 3 : tests de charge, lancés à part avec ./mvnw gatling:test -->
+		<dependency>
+			<groupId>io.gatling.highcharts</groupId>
+			<artifactId>gatling-charts-highcharts</artifactId>
+			<version>${gatling.version}</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -113,6 +141,15 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>io.gatling</groupId>
+				<artifactId>gatling-maven-plugin</artifactId>
+				<version>${gatling-maven-plugin.version}</version>
+				<configuration>
+					<!-- Surchargeable : ./mvnw gatling:test -Dgatling.simulationClass=com.wk.flashsale.load.BuyerJourneySimulation -->
+					<simulationClass>${gatling.simulationClass}</simulationClass>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>

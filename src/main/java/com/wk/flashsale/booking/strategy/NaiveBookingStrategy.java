@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Version naïve : lire, vérifier, agir (check-then-act).
  * Volontairement fausse sous concurrence, pour démontrer la survente.
  */
-@Component
+@Component("naive")
 public class NaiveBookingStrategy implements BookingStrategy {
 
     private final EventRepository eventRepository;

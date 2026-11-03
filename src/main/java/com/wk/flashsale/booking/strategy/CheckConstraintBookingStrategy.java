@@ -14,7 +14,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * un compteur négatif (migration V3). La règle est dans le schéma, donc elle protège aussi
  * les écritures qui ne passent pas par cette classe.
  */
-@Component
+@Component("check")
 public class CheckConstraintBookingStrategy implements BookingStrategy {
 
     private final EventRepository eventRepository;

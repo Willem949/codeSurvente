@@ -6,7 +6,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Volontairement ROUGE : ce test prouve que la version naïve survend.
+ * Preuve du bug, en VERT : le test réussit parce que la version naïve survend.
+ * (Il était rouge à l'étape 1 ; inversé à l'étape 7 pour que la CI puisse passer
+ * sans masquer la démonstration. S'il devient rouge, c'est que la survente n'est plus reproduite.)
  */
 class NaiveBookingStrategyTest extends AbstractBookingConcurrencyTest {
 
@@ -14,18 +16,15 @@ class NaiveBookingStrategyTest extends AbstractBookingConcurrencyTest {
     private NaiveBookingStrategy strategy;
 
     @Test
-    void ne_doit_pas_survendre() throws Exception {
+    void la_version_naive_survend() throws Exception {
         Outcome outcome = runConcurrentBookings(strategy);
 
         assertThat(outcome.reservationCount())
-                .as("aucune survente : au plus %d réservations", SEATS)
-                .isLessThanOrEqualTo(SEATS);
+                .as("check-then-act sans verrou : plus de réservations que de places")
+                .isGreaterThan(SEATS);
         // Conversion en long pour comparer des valeurs du même type que reservationCount
         assertThat((long) outcome.availableSeats())
-                .as("le compteur de places reflète les réservations")
-                .isEqualTo(SEATS - outcome.reservationCount());
-        assertThat((long) outcome.successCount())
-                .as("chaque SUCCESS correspond à une réservation en base")
-                .isEqualTo(outcome.reservationCount());
+                .as("décrémentations perdues : le compteur ne reflète plus les réservations")
+                .isNotEqualTo(SEATS - outcome.reservationCount());
     }
 }

@@ -27,8 +27,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 abstract class AbstractBookingConcurrencyTest extends PostgresIntegrationTest {
 
-    protected static final long EVENT_ID = 1L;
-    protected static final int SEATS = 500;
     protected static final int ATTEMPTS = 1_000;
     private static final int THREADS = 50;
 
@@ -50,9 +48,7 @@ abstract class AbstractBookingConcurrencyTest extends PostgresIntegrationTest {
     @BeforeEach
     @AfterEach
     void resetDatabase() {
-        // SQL direct : ne dépend ni du cache JPA ni du code testé
-        jdbcTemplate.update("DELETE FROM reservation");
-        jdbcTemplate.update("UPDATE event SET available_seats = ? WHERE id = ?", SEATS, EVENT_ID);
+        resetConcert(jdbcTemplate);
     }
 
     protected Outcome runConcurrentBookings(BookingStrategy strategy) throws Exception {
