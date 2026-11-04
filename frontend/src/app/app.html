@@ -1,0 +1,53 @@
+<main>
+  @if (event(); as e) {
+    <h1>{{ e.name }}</h1>
+    <p class="stock" data-testid="stock">
+      <strong>{{ e.availableSeats }}</strong> places restantes sur {{ e.totalSeats }}
+    </p>
+    <div class="bar" role="progressbar" [attr.aria-valuenow]="soldPercent()" aria-valuemin="0" aria-valuemax="100">
+      <div class="bar-fill" [style.width.%]="soldPercent()"></div>
+    </div>
+  } @else {
+    <h1>Vente flash</h1>
+    <p class="muted">Chargement de l'événement…</p>
+  }
+
+  <section class="card">
+    @switch (step()) {
+      @case ('idle') {
+        <label for="user">Acheteur</label>
+        <input id="user" [value]="userId()" (input)="setUserId($any($event.target).value)" maxlength="100" />
+        <button type="button" (click)="buy()" [disabled]="!userId() || event()?.availableSeats === 0">
+          {{ event()?.availableSeats === 0 ? 'Complet' : 'Réserver une place' }}
+        </button>
+      }
+      @case ('queued') {
+        <p>Vous êtes dans la file d'attente.</p>
+        <p class="big">{{ position() }}</p>
+        <p class="muted">personne(s) devant vous</p>
+      }
+      @case ('holding') {
+        <p>Réservation en cours…</p>
+      }
+      @case ('held') {
+        <p>Place bloquée pour vous (réservation n°{{ reservation()?.id }}).</p>
+        <p class="big" [class.urgent]="secondsLeft() < 60">{{ countdown() }}</p>
+        <p class="muted">pour payer, ensuite la place est remise en vente</p>
+        <button type="button" (click)="confirm()" [disabled]="secondsLeft() === 0">Payer (simulé)</button>
+      }
+      @case ('confirming') {
+        <p>Paiement en cours…</p>
+      }
+      @case ('confirmed') {
+        <p class="ok">C'est payé, la place n°{{ reservation()?.id }} est à vous.</p>
+      }
+      @case ('failed') {
+        <p class="error" role="alert">{{ message() }}</p>
+        <button type="button" (click)="reset()">Recommencer</button>
+      }
+    }
+    @if (message() && step() !== 'failed') {
+      <p class="muted" role="status">{{ message() }}</p>
+    }
+  </section>
+</main>

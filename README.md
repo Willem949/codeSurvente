@@ -14,6 +14,7 @@ Le but : ne jamais vendre plus de places qu'il n'y en a, rester rapide, et que �
 - [x] Pré-réservation avec expiration, idempotence
 - [x] File d'attente virtuelle
 - [x] Métriques Prometheus et Grafana, CI
+- [x] Front Angular minimal
 
 ## Le problème, en un test
 
@@ -74,7 +75,7 @@ Ce qu'on en retient :
 
 ## Stack
 
-Java 25, Spring Boot 4, PostgreSQL 17, Flyway, Redis (Lua), Micrometer / Prometheus / Grafana, Gatling, JUnit 5, GitHub Actions.
+Java 25, Spring Boot 4, PostgreSQL 17, Flyway, Redis (Lua), Micrometer / Prometheus / Grafana, Gatling, JUnit 5, Angular 22, GitHub Actions.
 
 Les tests tournent sur un vrai PostgreSQL embarqué (pas H2, les verrous ne se comportent pas pareil) et sur un serveur compatible Redis écrit en Java (jedis-mock), faute de Docker sur le poste. La CI ajoute un tir Gatling sur deux instances avec un vrai Postgres et un vrai Redis.
 
@@ -93,5 +94,18 @@ Il faut un JDK 25 et un PostgreSQL local avec une base `flashsale` (utilisateur 
 
 .\scripts\benchmark.ps1                           # toutes les stratégies, régénère docs/BENCHMARK.md
 ```
+
+### Le front
+
+Une page Angular pour jouer le parcours d'un acheteur à la main. Il faut Node.js 24 (voir [frontend/README.md](frontend/README.md)) et PostgreSQL démarré.
+
+```powershell
+.\scripts\start-instances.ps1                     # l'API sur 127.0.0.1:8081, sans Redis ni file d'attente
+cd frontend
+npm install                                       # une seule fois
+npm start                                         # http://127.0.0.1:4200
+```
+
+Pour voir aussi la file d'attente, lancer `.\scripts\local-redis.ps1` puis `.\scripts\start-instances.ps1 -Redis -Queue`. Si le stock est à 0 après un benchmark, `Invoke-WebRequest -UseBasicParsing -Method Post http://127.0.0.1:8081/bench/events/1/reset` le remet à 500 et **efface toutes les réservations**.
 
 Prometheus et Grafana : voir [ops/README.md](ops/README.md). Le détail des choix techniques est dans [docs/JOURNAL.md](docs/JOURNAL.md).
