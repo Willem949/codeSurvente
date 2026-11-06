@@ -131,6 +131,18 @@ describe('App : le parcours d’un acheteur', () => {
     expect(text()).toContain('réservation n°9');
   });
 
+  it('un double clic ne lance qu’un seul parcours', async () => {
+    click('Réserver');
+    click('Réserver');
+    await advance();
+    http.expectOne({ method: 'POST', url: '/events/1/queue' }).flush(null, queueDisabled);
+    await advance();
+    http.expectOne({ method: 'POST', url: '/events/1/reservations' })
+      .flush(reservation(12), { status: 201, statusText: 'Created' });
+    await advance();
+    expect(text()).toContain('réservation n°12');
+  });
+
   it('sur un 503 en entrant dans la file, réessaie au lieu d’abandonner', async () => {
     click('Réserver');
     await advance();

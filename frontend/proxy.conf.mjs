@@ -5,4 +5,5 @@ const target = process.env.API_URL ?? 'http://127.0.0.1:8081';
 export default {
   '/events': { target, secure: false },
   '/reservations': { target, secure: false },
+  '/bench': { target, secure: false },
 };

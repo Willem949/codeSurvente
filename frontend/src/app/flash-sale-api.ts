@@ -23,6 +23,14 @@ export interface Reservation {
   expiresAt: string;
 }
 
+export interface BenchCheck {
+  totalSeats: number;
+  availableSeats: number;
+  reservations: number;
+  oversold: number;
+  consistent: boolean;
+}
+
 /** Les appels de l'API Spring, un par endpoint. */
 @Injectable({ providedIn: 'root' })
 export class FlashSaleApi {
@@ -51,5 +59,21 @@ export class FlashSaleApi {
 
   confirm(reservationId: number) {
     return this.http.post<void>(`/reservations/${reservationId}/confirm`, null);
+  }
+
+  // Les endpoints de benchmark n'existent qu'avec le profil Spring "bench"
+
+  /** Remet le stock à `seats` et efface toutes les réservations de l'événement */
+  benchReset(eventId: number, seats: number) {
+    return this.http.post<void>(`/bench/events/${eventId}/reset`, null, { params: { seats } });
+  }
+
+  benchBook(eventId: number, strategy: string, userId: string) {
+    return this.http.post<unknown>(`/bench/events/${eventId}/bookings`, null, { params: { strategy, userId } });
+  }
+
+  /** Ce que contient vraiment la base : c'est elle qui fait foi, pas les réponses HTTP */
+  benchCheck(eventId: number) {
+    return this.http.get<BenchCheck>(`/bench/events/${eventId}/check`);
   }
 }

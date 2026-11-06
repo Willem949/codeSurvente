@@ -1,0 +1,47 @@
+<section class="demo">
+  <h2>La survente est-elle réglée ?</h2>
+  <p class="muted">
+    {{ attempts }} acheteurs se battent pour {{ seats }} places, avec chaque stratégie.
+    Le résultat vient de la base, pas des réponses HTTP.
+  </p>
+  <button type="button" (click)="run()" [disabled]="running()">
+    {{ running() ? 'Vente en cours…' : 'Lancer la démonstration' }}
+  </button>
+  <p class="muted warning">
+    Remet le stock à zéro et efface toutes les réservations de l'événement.
+    Une seule démonstration à la fois : lancée depuis deux pages, chacune efface le tir de l'autre et les chiffres sont faux.
+  </p>
+
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+
+  @for (row of rows(); track row.id) {
+    <div class="row" data-testid="demo-row">
+      <div class="head">
+        <strong>{{ row.label }}</strong>
+        @if (row.check; as check) {
+          @if (check.oversold > 0) {
+            <span class="bad">{{ check.oversold }} places en trop</span>
+          } @else {
+            <span class="good">Aucune survente</span>
+          }
+        } @else if (row.done > 0) {
+          <span class="muted">{{ row.done }} / {{ attempts }}</span>
+        } @else {
+          <span class="muted">en attente</span>
+        }
+      </div>
+      @if (row.check; as check) {
+        <div class="bar">
+          <div class="sold" [style.width.%]="percent(row, seats)"></div>
+          <div class="excess" [style.width.%]="percent(row, check.oversold)"></div>
+        </div>
+        <p class="muted">
+          {{ check.reservations }} réservations en base pour {{ check.totalSeats }} places,
+          le compteur affiche {{ check.availableSeats }}
+        </p>
+      }
+    </div>
+  }
+</section>

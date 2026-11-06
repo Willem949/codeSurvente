@@ -1,0 +1,80 @@
+.demo {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+h2,
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.warning {
+  font-size: 0.8rem;
+}
+
+.error,
+.bad {
+  color: var(--error);
+}
+
+.bad,
+.good {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.good {
+  color: var(--ok);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.bar {
+  display: flex;
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.sold {
+  background: var(--ok);
+}
+
+.excess {
+  background: var(--error);
+}

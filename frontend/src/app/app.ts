@@ -3,6 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, firstValueFrom, interval, of, startWith, switchMap } from 'rxjs';
 import { EventInfo, FlashSaleApi, QueueTicket, Reservation } from './flash-sale-api';
+import { OversellDemo } from './oversell-demo';
 
 const EVENT_ID = 1;
 /** Nombre d'essais sur un 503 (Redis surchargé) */
@@ -13,6 +14,7 @@ type Step = 'idle' | 'queued' | 'holding' | 'held' | 'confirming' | 'confirmed' 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 @Component({
+  imports: [OversellDemo],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',
@@ -64,6 +66,12 @@ export class App {
   }
 
   protected async buy() {
+    // Double clic : le 2e clic partirait avec une autre clé et le serveur répondrait « déjà réservé »,
+    // alors que l'acheteur a bien sa place. Le test porte sur l'état, le bouton n'a pas encore disparu
+    if (this.step() !== 'idle') {
+      return;
+    }
+    this.step.set('holding');
     this.message.set('');
     this.reservation.set(null);
     try {
